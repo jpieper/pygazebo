@@ -1,10 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-__author__ = 'Josh Pieper'
-__email__ = 'jjp@pobox.com'
-__version__ = '2.2.1-2014.1'
-
 """
 Python bindings to the Gazebo multi-robot simulator
 ===================================================
@@ -22,3 +18,11 @@ that python applications can seamlessly interact with Gazebo entities.
 """
 
 from pygazebo import Manager
+from pygazebo import Publisher
+from pygazebo import Subscriber
+
+__all__ = ["Manager", "Publisher", "Subscriber"]
+
+__author__ = 'Josh Pieper'
+__email__ = 'jjp@pobox.com'
+__version__ = '2.2.1-2014.1'

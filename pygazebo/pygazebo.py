@@ -19,6 +19,12 @@ class ParseError(RuntimeError):
     pass
 
 class Publisher(object):
+    """Publishes data to the Gazebo publish-subscribe bus.
+
+    Attributes:
+      topic (str): The topic name this publisher is using.
+      msg_type (str): The Gazebo message type.
+    """
     def __init__(self):
         self.topic = None
         self.msg_type = None
@@ -26,9 +32,28 @@ class Publisher(object):
         self._first_listener_ready = eventlet.event.Event()
 
     def publish(self, msg):
+        """Publish a new instance of this data.
+
+        Args:
+          msg: A google.protobuf.message.Message derived instance
+        """
         self._publish_impl(msg)
 
+    def wait_for_listener(self):
+        """Block (using eventlet) until at least one listener exists."""
+        self._first_listener_ready.wait()
+
+    def remove(self):
+        """Stop advertising this topic.
+
+        Note:
+          Once `remove` is called, no further methods should be called.
+        """
+        raise NotImplementedError()
+
     def _publish_impl(self, message):
+        # Try writing to each of our listeners.  If any give an error,
+        # disconnect them.
         to_remove = []
         for connection in self._listeners:
             try:
@@ -38,43 +63,54 @@ class Publisher(object):
                 connection.socket.close()
                 to_remove.append(connection)
 
-        [self._listeners.remove(x) for x in to_remove]
+        for x in to_remove:
+            self._listeners.remove(x)
 
     def _connect(self, connection):
         self._listeners.append(connection)
         if not self._first_listener_ready.ready():
             self._first_listener_ready.send()
 
-    def wait_for_listener(self):
-        self._first_listener_ready.wait()
-
-    def remove(self):
-        # TODO
-        pass
-
 class Subscriber(object):
+    """Receives data from the Gazebo publish-subscribe bus.
+
+    Attributes:
+      topic (str): The topic name this subscriber is listening for.
+      msg_type (str): The Gazebo message type.
+      callback (function): The current function to invoke.
+    """
     def __init__(self, local_host, local_port):
         logger.debug('Subscriber.__init__', local_host, local_port)
         self.topic = None
         self.msg_type = None
         self.callback = None
-        self.local_host = local_host
-        self.local_port = local_port
+        
+        self._local_host = local_host
+        self._local_port = local_port
         self._connections = []
 
-    def start_connect(self, pub):
-        eventlet.spawn_n(self.connect, pub)
+    def remove(self):
+        """Stop listening for this topic.
 
-    def connect(self, pub):
-        connection = Connection()
+        Note:
+          Once `remove` is called, the callback will no longer be invoked.
+        """
+        raise NotImplementedError()
+
+    def _start_connect(self, pub):
+        # Do the actual work in an eventlet infinite loop.
+        eventlet.spawn_n(self._connect, pub)
+
+    def _connect(self, pub):
+        connection = _Connection()
 
         connection.connect((pub.host, pub.port))
         self._connections.append(connection)
 
         to_send = msg.subscribe_pb2.Subscribe()
         to_send.topic = pub.topic
-        to_send.host = self.local_host
-        to_send.port = self.local_port
+        to_send.host = self._local_host
+        to_send.port = self._local_port
         to_send.msg_type = pub.msg_type
         to_send.latching = False
 
@@ -86,11 +122,7 @@ class Subscriber(object):
                 return
             self.callback(data)
 
-    def remove(self):
-        # TODO
-        pass
-
-class Connection(object):
+class _Connection(object):
     def __init__(self):
         self.address = None
         self.socket = None
@@ -170,38 +202,110 @@ class _PublisherRecord(object):
         self.port = msg.port
 
 class Manager(object):
-    '''The Manager communicates with the gazebo server and provides
-    the top level interface for communicating with it.'''
+    """Primary connection to the Gazebo server.
+
+    The Manager instance creates a connection to the Gazebo server,
+    then allows the client to either advertise topics for publication,
+    or to listen to other publishers.
+    """
 
     def __init__(self, address):
-        '''@param address - a tuple of (host, port)'''
-        self.address = address
-        self.master = Connection()
-        self.server = Connection()
-        self.namespaces = []
-        self.publisher_records = set()
-        self.publishers = {}
-        self.subscribers = {}
+        """Create a connection to the Gazebo server.
+
+        Args:
+          address: A tuple of (host, port), where the host is a
+              string, and the port is an integer.  These are used to
+              connect to the Gazebo server.
+        """
+        self._address = address
+        self._master = _Connection()
+        self._server = _Connection()
+        self._namespaces = []
+        self._publisher_records = set()
+        self._publishers = {}
+        self._subscribers = {}
 
         eventlet.spawn_n(self._run)
 
+    def advertise(self, topic_name, msg_type):
+        """Inform the Gazebo server of a topic we will publish.
+
+        Args:
+          topic_name (str): The topic to send data on.
+          msg_type (str): The Gazebo message type string.
+
+        Returns:
+          A ``Publisher`` instance which can be used to send data on
+          this topic.
+        """
+        if topic_name in self._publishers:
+            raise RuntimeError('multiple publishers for: ' + topic_name)
+
+        to_send = msg.publish_pb2.Publish()
+        to_send.topic = topic_name
+        to_send.msg_type = msg_type
+        to_send.host = self._server.local_host
+        to_send.port = self._server.local_port
+
+        self._master.write_packet('advertise', to_send)
+        result = Publisher()
+        result.topic = topic_name
+        result.msg_type = msg_type
+        self._publishers[topic_name] = result
+
+        return result
+
+    def subscribe(self, topic_name, msg_type, callback):
+        """Request the Gazebo server send messages on a specific topic.
+
+        Args:
+          topic_name (str): The topic for which data will be sent.
+          msg_type (str): The Gazebo message type string.
+          callback (function): A callback to invoke when new data on
+              this topic is received.  The callback will be invoked
+              with raw binary data.  It is expected to deserialize the
+              information using the appropriate protobuf definition.
+
+        Returns:
+          A ``Subscriber`` instance which can be used to update the
+          callback or stop the subscription.
+        """
+
+        if topic_name in self._subscribers:
+            raise RuntimeError('multiple subscribers for: ' + topic_name)
+
+        to_send = msg.subscribe_pb2.Subscribe()
+        to_send.topic = topic_name
+        to_send.msg_type = msg_type
+        to_send.host = self._server.local_host
+        to_send.port = self._server.local_port
+        to_send.latching = False
+
+        self._master.write_packet('subscribe', to_send)
+
+        result = Subscriber(local_host=to_send.host,
+                            local_port=to_send.port)
+        result.topic = topic_name
+        result.msg_type = msg_type
+        result.callback = callback
+        self._subscribers[topic_name] = result
+        return result
+
     def _run(self):
-        '''Starts the connection and processes events.  It is expected
-        to be invoked from an eventlet spawn, and will only return
-        when the connection is closed or an error occurs.'''
+        """Starts the connection and processes events."""
         logger.debug('Manager.run')
-        self.master.connect(self.address)
-        eventlet.spawn_n(self.server.serve, self._handle_server_connection)
+        self._master.connect(self._address)
+        eventlet.spawn_n(self._server.serve, self._handle_server_connection)
 
         # Read and process the required three initialization packets.
-        initData = self.master.read()
+        initData = self._master.read()
         if initData.type != 'version_init':
             raise ParseError('unexpected initialization packet: ' +
                              initData.type)
         self._handle_version_init(
             msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
 
-        namespacesData = self.master.read()
+        namespacesData = self._master.read()
         if namespacesData.type != 'topic_namepaces_init':
             raise ParseError('unexpected namespaces init packet: ' +
                              namespacesData.type)
@@ -209,7 +313,7 @@ class Manager(object):
             msg.gz_string_v_pb2.GzString_V.FromString(
                 namespacesData.serialized_data))
 
-        publishersData = self.master.read()
+        publishersData = self._master.read()
         if publishersData.type != 'publishers_init':
             raise ParseError('unexpected publishers init packet: ' +
                              publishersData.type)
@@ -218,64 +322,18 @@ class Manager(object):
                 publishersData.serialized_data))
 
         logger.debug('Connection: initialized!')
-        self.initialized = True
+        self._initialized = True
 
         # Enter the normal message dispatch loop.
         while True:
-            data = self.master.read()
+            data = self._master.read()
             if data is None:
                 return
 
             self._process_message(data)
 
-    def advertise(self, topic_name, msg_type):
-        '''Prepare to publish a topic.
-
-        @returns a Publisher instance'''
-        if topic_name in self.publishers:
-            raise RuntimeError('multiple publishers for: ' + topic_name)
-
-        to_send = msg.publish_pb2.Publish()
-        to_send.topic = topic_name
-        to_send.msg_type = msg_type
-        to_send.host = self.server.local_host
-        to_send.port = self.server.local_port
-
-        self.master.write_packet('advertise', to_send)
-        result = Publisher()
-        result.topic = topic_name
-        result.msg_type = msg_type
-        self.publishers[topic_name] = result
-
-        return result
-
-    def subscribe(self, topic_name, msg_type, callback):
-        '''Request to receive updates on a topic.
-
-        @returns a Subscriber instance'''
-
-        if topic_name in self.subscribers:
-            raise RuntimeError('multiple subscribers for: ' + topic_name)
-
-        to_send = msg.subscribe_pb2.Subscribe()
-        to_send.topic = topic_name
-        to_send.msg_type = msg_type
-        to_send.host = self.server.local_host
-        to_send.port = self.server.local_port
-        to_send.latching = False
-
-        self.master.write_packet('subscribe', to_send)
-
-        result = Subscriber(local_host=to_send.host,
-                            local_port=to_send.port)
-        result.topic = topic_name
-        result.msg_type = msg_type
-        result.callback = callback
-        self.subscribers[topic_name] = result
-        return result
-
     def _handle_server_connection(self, socket, remote_address):
-        this_connection = Connection()
+        this_connection = _Connection()
         this_connection.socket = socket
         this_connection._socket_ready.send(True)
 
@@ -293,11 +351,11 @@ class Manager(object):
                             msg.type)
 
     def _handle_server_sub(self, this_connection, msg):
-        if not msg.topic in self.publishers:
+        if not msg.topic in self._publishers:
             logger.warn('Manager.handle_server_sub unknown topic:', msg.topic)
             return
 
-        publisher = self.publishers[msg.topic]
+        publisher = self._publishers[msg.topic]
         if publisher.msg_type != msg.msg_type:
             logger.error(('Manager.handle_server_sub type mismatch ' +
                           'requested=%d publishing=%s') % (
@@ -321,13 +379,13 @@ class Manager(object):
             raise ParseError('Unsupported gazebo version: ' + msg.data)
 
     def _handle_topic_namespaces_init(self, msg):
-        self.namespaces = msg.data
-        logger.debug('Manager.handle_topic_namespaces_init', self.namespaces)
+        self._namespaces = msg.data
+        logger.debug('Manager.handle_topic_namespaces_init', self._namespaces)
 
     def _handle_publishers_init(self, msg):
         logger.debug('Manager.handle_publishers_init')
         for publisher in msg.publisher:
-            self.publisher_records.add(_PublisherRecord(publisher))
+            self._publisher_records.add(_PublisherRecord(publisher))
             logger.debug('  %s - %s %s:%d' % (
                     publisher.topic, publisher.msg_type,
                     publisher.host, publisher.port))
@@ -335,38 +393,38 @@ class Manager(object):
     def _handle_publisher_add(self, msg):
         logger.debug('Manager.handle_publisher_add: %s - %s %s:%d' % (
                 msg.topic, msg.msg_type, msg.host, msg.port))
-        self.publisher_records.add(_PublisherRecord(msg))
+        self._publisher_records.add(_PublisherRecord(msg))
 
     def _handle_publisher_del(self, msg):
         logger.debug('Manager.handle_publisher_del', msg.topic)
         try:
-            self.publisher_records.remove(_PublisherRecord(msg))
+            self._publisher_records.remove(_PublisherRecord(msg))
         except KeyError:
             logger.debug('got publisher_del for unknown: ' + msg.topic)
 
     def _handle_namespace_add(self, msg):
         logger.debug('Manager.handle_namespace_add', msg.data)
-        self.namespaces.append(msg.data)
+        self._namespaces.append(msg.data)
 
     def _handle_publisher_subscribe(self, msg):
         logger.debug('Manager.handle_publisher_subscribe', msg.topic)
         logger.debug(' our info: ',
-                     self.server.local_host, self.server.local_port)
-        if not msg.topic in self.subscribers:
+                     self._server.local_host, self._server.local_port)
+        if not msg.topic in self._subscribers:
             logger.debug('no subscribers!')
             return
 
         # Check to see if this is ourselves... if so, then don't do
         # anything about it.
-        if (msg.host == self.server.local_host and
-            msg.port == self.server.local_port):
+        if (msg.host == self._server.local_host and
+            msg.port == self._server.local_port):
             logger.debug('got publisher_subscribe for ourselves')
             return
 
         logger.debug('creating subscriber for:', msg.topic, msg.host, msg.port)
 
-        subscriber = self.subscribers[msg.topic]
-        subscriber.start_connect(msg)
+        subscriber = self._subscribers[msg.topic]
+        subscriber._start_connect(msg)
 
     def _handle_unsubscribe(self, msg):
         pass
