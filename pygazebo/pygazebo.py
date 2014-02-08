@@ -329,6 +329,10 @@ class Manager(object):
             msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
 
         namespacesData = self._master.read()
+        
+        # NOTE: This type string is mis-spelled in the official client
+        # and server as of 2.2.1.  Presumably they'll just leave it be
+        # to preserve network compatibility.
         if namespacesData.type != 'topic_namepaces_init':
             raise ParseError('unexpected namespaces init packet: ' +
                              namespacesData.type)
