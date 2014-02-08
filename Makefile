@@ -1,6 +1,7 @@
 .PHONY: clean-pyc clean-build docs
 
 help:
+	@echo "update-gazebo - update message definitions from Gazebo"
 	@echo "clean-build - remove build artifacts"
 	@echo "clean-pyc - remove Python file artifacts"
 	@echo "lint - check style with flake8"
@@ -10,6 +11,23 @@ help:
 	@echo "docs - generate Sphinx HTML documentation, including API docs"
 	@echo "release - package and upload a release"
 	@echo "sdist - package"
+
+# Locate Gazebo header installation directory.
+GAZEBO_INCLUDE_DIR := \
+  ${shell pkg-config gazebo --cflags 2>/dev/null | \
+    perl -ne '/-I(\S*gazebo\S*).*$$/ and print $$1'}
+
+update-gazebo:
+	if [ 'z${GAZEBO_INCLUDE_DIR}' = 'z' ]; then \
+    echo "Gazebo must be installed to update message definitions"; \
+    exit 1; \
+  fi
+	rm -f pygazebo/msg/*
+	for definition in \
+	  $$(find ${GAZEBO_INCLUDE_DIR}/gazebo/msgs/proto -name '*.proto'); \
+      do protoc -I ${GAZEBO_INCLUDE_DIR}/gazebo/msgs/proto \
+                --python_out=pygazebo/msg $$definition; \
+	  done
 
 clean: clean-build clean-pyc
 
