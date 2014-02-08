@@ -59,6 +59,9 @@ class Publisher(object):
             try:
                 connection.write(message)
             except:
+                # TODO jpieper: We should probably catch only a subset
+                # of exceptions here.
+                
                 # Assume that the remote end closed.
                 connection.socket.close()
                 to_remove.append(connection)
@@ -104,9 +107,12 @@ class Subscriber(object):
     def _connect(self, pub):
         connection = _Connection()
 
+        # Connect to the remote provider.
         connection.connect((pub.host, pub.port))
         self._connections.append(connection)
 
+        # Send the initial message, which is encapsulated inside of a
+        # Packet structure.
         to_send = msg.subscribe_pb2.Subscribe()
         to_send.topic = pub.topic
         to_send.host = self._local_host
@@ -115,6 +121,9 @@ class Subscriber(object):
         to_send.latching = False
 
         connection.write_packet('sub', to_send)
+
+        # Now wait forever reading messages.  For some reason, the
+        # received data is not encapsulated in an outer packet.
         while True:
             data = connection.read_raw()
             if data is None:
@@ -123,6 +132,13 @@ class Subscriber(object):
             self.callback(data)
 
 class _Connection(object):
+    """Manages a Gazebo protocol connection.
+
+    This can connect to either the Gazebo server, or to a data
+    publisher.  Additionally, it can act as the TCP client, or as a
+    server.  In either case, it provides methods to read and write
+    structured data on the socket.
+    """
     def __init__(self):
         self.address = None
         self.socket = None
@@ -195,6 +211,14 @@ class _Connection(object):
         return self._local_port
 
 class _PublisherRecord(object):
+    """Information about a remote topic.
+
+    Attributes:
+      topic (str): The string description of the topic.
+      msg_type (str): The Gazebo message type string.
+      host (str): The remote host of the topic publisher.
+      port (int): The remote port of the topic publisher.
+    """
     def __init__(self, msg):
         self.topic = msg.topic
         self.msg_type = msg.msg_type
@@ -208,7 +232,6 @@ class Manager(object):
     then allows the client to either advertise topics for publication,
     or to listen to other publishers.
     """
-
     def __init__(self, address):
         """Create a connection to the Gazebo server.
 

@@ -15,6 +15,8 @@ sensor feedback and physically plausible interactions between objects
 
 pygazebo implements the Gazebo network publish-subscribe protocol, so
 that python applications can seamlessly interact with Gazebo entities.
+
+pygazebo is based on eventlet for asynchronous network operations.
 """
 
 from pygazebo import Manager
