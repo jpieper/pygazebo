@@ -8,5 +8,6 @@ exclude_lines =
 omit =
    */msg/*
    /usr/*
+   pytest*
 
 show_missing = True

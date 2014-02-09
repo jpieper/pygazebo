@@ -10,7 +10,7 @@ Tests for `pygazebo` module.
 
 import eventlet
 import mock
-import unittest
+import pytest
 
 # TO TEST:
 #  * normal cases
@@ -21,6 +21,7 @@ from pygazebo.msg import gz_string_pb2
 from pygazebo.msg import gz_string_v_pb2
 from pygazebo.msg import packet_pb2
 from pygazebo.msg import publishers_pb2
+from pygazebo.msg import publish_pb2
 
 
 class PipeChannel(object):
@@ -36,6 +37,9 @@ class PipeChannel(object):
 
     def __init__(self):
         self.queue = eventlet.queue.Queue(0)
+
+    def send(self, data):
+        self.write(data)
 
     def write(self, data):
         for x in data:
@@ -97,26 +101,70 @@ class MockServer(object):
             'publishers_init',
             publishers_pb2.Publishers(publisher=[]))
 
+    def read_packet(self):
+        header = self.pipe.endpointa.recv(8)
+        if len(header) < 8:
+            return None
 
-@mock.patch('eventlet.connect')
-class TestPygazebo(unittest.TestCase):
+        try:
+            size = int(header, 16)
+        except ValueError:
+            return None
 
-    def setUp(self):
+        data = self.pipe.endpointa.recv(size)
+        if len(data) < size:
+            return None
+        return data
+
+
+class ManagerFixture(object):
+    def __init__(self):
         self.manager = None
+
         self.server = MockServer()
 
-    def test_connect(self, *args):
-        eventlet.connect.configure_mock(
+        self.old_connect = eventlet.connect
+        eventlet.connect = mock.MagicMock(
             return_value=self.server.client_socket())
+
         self.manager = pygazebo.Manager(('localhost', 12345))
         self.server.init_sequence()
 
-    def tearDown(self):
+    def done(self):
+        eventlet.connect = self.old_connect
+
         if self.manager is not None:
             if self.manager._client_thread._exit_event.ready():
                 self.manager._client_thread.wait()
             if self.manager._server_thread._exit_event.ready():
                 self.manager._server_thread.wait()
 
-if __name__ == '__main__':
-    unittest.main()
+
+@pytest.fixture
+def manager():
+    return ManagerFixture()
+
+
+class TestPygazebo(object):
+    @pytest.fixture(autouse=True)
+    def cleanup(self, request, manager):
+        request.addfinalizer(manager.done)
+
+    def test_connect(self, manager):
+        # Nothing beyond the base fixture is required for this test.
+        pass
+
+    def test_advertise(self, manager):
+        # Start listening for things in the server.
+        listen = eventlet.spawn(manager.server.read_packet)
+        publisher = manager.manager.advertise('mytopic', 'mymsgtype')
+        assert publisher is not None
+        packet_data = listen.wait()
+
+        # We should have received an advertise for this topic.
+        packet = packet_pb2.Packet.FromString(packet_data)
+        assert packet.type == 'advertise'
+
+        advertise = publish_pb2.Publish.FromString(packet.serialized_data)
+        assert advertise.topic == 'mytopic'
+        assert advertise.msg_type == 'mymsgtype'
