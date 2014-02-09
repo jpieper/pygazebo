@@ -5,10 +5,8 @@ import os
 import sys
 
 
-try:
-    from setuptools import setup
-except ImportError:
-    from distutils.core import setup
+from setuptools import setup
+from setuptools.command.test import test as TestCommand
 
 if sys.argv[-1] == 'publish':
     os.system('python setup.py sdist upload')
@@ -16,6 +14,17 @@ if sys.argv[-1] == 'publish':
 
 readme = open('README.rst').read()
 history = open('HISTORY.rst').read().replace('.. :changelog:', '')
+
+class PyTest(TestCommand):
+    def finalize_options(self):
+        TestCommand.finalize_options(self)
+        self.test_args = []
+        self.test_suite = True
+
+    def run_tests(self):
+        import pytest
+        errcode = pytest.main(self.test_args)
+        sys.exit(errcode)
 
 setup(
     name='pygazebo',
@@ -30,8 +39,7 @@ setup(
     ],
     package_dir={'pygazebo': 'pygazebo'},
     include_package_data=True,
-    install_requires=[
-    ],
+    install_requires=['eventlet', 'protobuf'],
     license="Apache License 2.0",
     zip_safe=False,
     keywords='pygazebo',
@@ -48,5 +56,10 @@ setup(
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: Scientific/Engineering',
     ],
+    tests_require=['pytest', 'mock'],
+    extras_require={
+        'testing': ['pytest', 'mock'],
+        },
+    cmdclass={'test': PyTest},
     test_suite='tests',
 )
