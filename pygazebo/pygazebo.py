@@ -254,7 +254,7 @@ class Manager(object):
         self._publishers = {}
         self._subscribers = {}
 
-        eventlet.spawn_n(self._run)
+        self._client_thread = eventlet.spawn(self._run)
 
     def advertise(self, topic_name, msg_type):
         """Inform the Gazebo server of a topic we will publish.
@@ -324,7 +324,8 @@ class Manager(object):
         """Starts the connection and processes events."""
         logger.debug('Manager.run')
         self._master.connect(self._address)
-        eventlet.spawn_n(self._server.serve, self._handle_server_connection)
+        self._server_thread = eventlet.spawn(
+            self._server.serve, self._handle_server_connection)
 
         # Read and process the required three initialization packets.
         initData = self._master.read()
