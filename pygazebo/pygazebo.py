@@ -15,8 +15,10 @@ import msg.subscribe_pb2
 
 logger = logging.getLogger(__name__)
 
+
 class ParseError(RuntimeError):
     pass
+
 
 class Publisher(object):
     """Publishes data to the Gazebo publish-subscribe bus.
@@ -61,7 +63,7 @@ class Publisher(object):
             except:
                 # TODO jpieper: We should probably catch only a subset
                 # of exceptions here.
-                
+
                 # Assume that the remote end closed.
                 connection.socket.close()
                 to_remove.append(connection)
@@ -73,6 +75,7 @@ class Publisher(object):
         self._listeners.append(connection)
         if not self._first_listener_ready.ready():
             self._first_listener_ready.send()
+
 
 class Subscriber(object):
     """Receives data from the Gazebo publish-subscribe bus.
@@ -87,7 +90,7 @@ class Subscriber(object):
         self.topic = None
         self.msg_type = None
         self.callback = None
-        
+
         self._local_host = local_host
         self._local_port = local_port
         self._connections = []
@@ -130,6 +133,7 @@ class Subscriber(object):
                 self._connections.remove(connection)
                 return
             self.callback(data)
+
 
 class _Connection(object):
     """Manages a Gazebo protocol connection.
@@ -210,6 +214,7 @@ class _Connection(object):
         self._local_ready.wait()
         return self._local_port
 
+
 class _PublisherRecord(object):
     """Information about a remote topic.
 
@@ -224,6 +229,7 @@ class _PublisherRecord(object):
         self.msg_type = msg.msg_type
         self.host = msg.host
         self.port = msg.port
+
 
 class Manager(object):
     """Primary connection to the Gazebo server.
@@ -329,7 +335,7 @@ class Manager(object):
             msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
 
         namespacesData = self._master.read()
-        
+
         # NOTE: This type string is mis-spelled in the official client
         # and server as of 2.2.1.  Presumably they'll just leave it be
         # to preserve network compatibility.
@@ -386,7 +392,7 @@ class Manager(object):
         if publisher.msg_type != msg.msg_type:
             logger.error(('Manager.handle_server_sub type mismatch ' +
                           'requested=%d publishing=%s') % (
-                    publisher.msg_type, msg.msg_type))
+                publisher.msg_type, msg.msg_type))
             return
 
         publisher._connect(this_connection)
@@ -414,12 +420,12 @@ class Manager(object):
         for publisher in msg.publisher:
             self._publisher_records.add(_PublisherRecord(publisher))
             logger.debug('  %s - %s %s:%d' % (
-                    publisher.topic, publisher.msg_type,
-                    publisher.host, publisher.port))
+                publisher.topic, publisher.msg_type,
+                publisher.host, publisher.port))
 
     def _handle_publisher_add(self, msg):
         logger.debug('Manager.handle_publisher_add: %s - %s %s:%d' % (
-                msg.topic, msg.msg_type, msg.host, msg.port))
+            msg.topic, msg.msg_type, msg.host, msg.port))
         self._publisher_records.add(_PublisherRecord(msg))
 
     def _handle_publisher_del(self, msg):
@@ -443,8 +449,8 @@ class Manager(object):
 
         # Check to see if this is ourselves... if so, then don't do
         # anything about it.
-        if (msg.host == self._server.local_host and
-            msg.port == self._server.local_port):
+        if ((msg.host == self._server.local_host and
+             msg.port == self._server.local_port)):
             logger.debug('got publisher_subscribe for ourselves')
             return
 
@@ -460,13 +466,13 @@ class Manager(object):
         pass
 
     _MSG_HANDLERS = {
-        'publisher_add' : (_handle_publisher_add, msg.publish_pb2.Publish),
-        'publisher_del' : (_handle_publisher_del, msg.publish_pb2.Publish),
-        'namespace_add' : (_handle_namespace_add, msg.gz_string_pb2.GzString),
-        'publisher_subscribe' : (_handle_publisher_subscribe,
-                                 msg.publish_pb2.Publish),
-        'publisher_advertise' : (_handle_publisher_subscribe,
-                                 msg.publish_pb2.Publish),
-        'unsubscribe' : (_handle_unsubscribe, msg.subscribe_pb2.Subscribe),
-        'unadvertise' : (_handle_unadvertise, msg.publish_pb2.Publish),
+        'publisher_add': (_handle_publisher_add, msg.publish_pb2.Publish),
+        'publisher_del': (_handle_publisher_del, msg.publish_pb2.Publish),
+        'namespace_add': (_handle_namespace_add, msg.gz_string_pb2.GzString),
+        'publisher_subscribe': (_handle_publisher_subscribe,
+                                msg.publish_pb2.Publish),
+        'publisher_advertise': (_handle_publisher_subscribe,
+                                msg.publish_pb2.Publish),
+        'unsubscribe': (_handle_unsubscribe, msg.subscribe_pb2.Subscribe),
+        'unadvertise': (_handle_unadvertise, msg.publish_pb2.Publish),
         }

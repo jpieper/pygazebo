@@ -42,7 +42,7 @@ clean-pyc:
 	find . -name '*~' -exec rm -f {} +
 
 lint:
-	flake8 pygazebo tests
+	flake8 pygazebo tests --exclude msg
 
 test:
 	python setup.py test
