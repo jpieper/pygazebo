@@ -2,14 +2,14 @@
 pygazebo
 ===============================
 
-.. image:: https://badge.fury.io/py/pygazebo.png
-    :target: http://badge.fury.io/py/pygazebo
-    
 .. image:: https://travis-ci.org/jpieper/pygazebo.png?branch=master
         :target: https://travis-ci.org/jpieper/pygazebo
 
 .. image:: https://pypip.in/d/pygazebo/badge.png
         :target: https://crate.io/packages/pygazebo?version=latest
+
+.. image:: https://coveralls.io/repos/jpieper/pygazebo/badge.png
+        :target: https://coveralls.io/r/jpieper/pygazebo
 
 
 Python bindings for the Gazebo multi-robot simulator.
