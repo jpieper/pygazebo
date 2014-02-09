@@ -2,7 +2,7 @@
 pygazebo
 ===============================
 
-.. image:: https://travis-ci.org/jpieper/pygazebo.png?branch=master
+.. image:: https://travis-ci.org/jpieper/pygazebo.png?branch=develop
         :target: https://travis-ci.org/jpieper/pygazebo
 
 .. image:: https://pypip.in/d/pygazebo/badge.png
