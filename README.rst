@@ -11,8 +11,8 @@ pygazebo
 .. image:: https://coveralls.io/repos/jpieper/pygazebo/badge.png
         :target: https://coveralls.io/r/jpieper/pygazebo
 
-
-Python bindings for the Gazebo multi-robot simulator.
+pygazebo provides python bindings for the Gazebo
+(http://gazebosim.org) multi-robot simulator.
 
 * Free software: Apache 2.0 License
 * Documentation: http://pygazebo.rtfd.org.
@@ -20,4 +20,31 @@ Python bindings for the Gazebo multi-robot simulator.
 Features
 --------
 
-* TODO
+* Supports publishing and subscribing to any Gazebo topics using a
+  straightforward python API.
+* Python versions of all defined Gazebo protobuf messages are
+  included.
+* Based on eventlet (http://eventlet.net), for easy concurrency support.
+
+Simple Usage
+------------
+
+The following example shows how easy it is to publish a message
+repeatedly to control a single joint in a Gazebo model.
+
+.. code-block:: python
+
+        import eventlet
+        from pygazebo import Manager
+        
+        manager = Manager(('localhost', 11345))
+        publisher = manager.advertise('/gazebo/default/model/joint_cmd',
+                                      'gazebo.msgs.JointCmd')
+
+        message = pygazebo.msg.joint_cmd_pb2.JointCmd()
+        message.axis = 0
+        message.force = 1.0
+
+        while True:
+            publisher.publish(message)
+            eventlet.sleep(1.0)

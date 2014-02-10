@@ -2,11 +2,8 @@
 Contributing
 ============
 
-Types of Contributions
-----------------------
-
 Report and Fix Bugs
-~~~~~~~~~~~~~~~~~~~
+-------------------
 
 Report or look for bugs to fix at https://github.com/jpieper/pygazebo/issues
 
@@ -55,15 +52,8 @@ Before you submit a pull request, check that it meets these guidelines:
 
 1. The pull request should include tests.
 2. If the pull request adds functionality, the docs should be updated. Put
-   your new functionality into a function with a docstring, and add the
-   feature to the list in README.rst.
-3. The pull request should work for Python 2.6, 2.7, and 3.3, and for PyPy. Check 
+   your new functionality into a function with a docstring, and update
+   the reference documentation accordingly.
+3. The pull request should work for Python 2.7. Check 
    https://travis-ci.org/jpieper/pygazebo/pull_requests
    and make sure that the tests pass for all supported Python versions.
-
-Tips
-----
-
-To run a subset of tests::
-
-	$ python -m unittest tests.test_pygazebo
