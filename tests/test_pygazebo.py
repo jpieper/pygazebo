@@ -47,6 +47,18 @@ class PipeChannel(object):
             assert len(x) == 1
             self.other.queue.put(x, block=True, timeout=1.0)
 
+    def write_frame(self, data):
+        header = '%08X' % len(data)
+        self.write(header + data)
+
+    def write_packet(self, name, message):
+        packet = packet_pb2.Packet()
+        packet.stamp.sec = 0
+        packet.stamp.nsec = 0
+        packet.type = name
+        packet.serialized_data = message.SerializeToString()
+        self.write_frame(packet.SerializeToString())
+
     def recv(self, length):
         result = ''
         for x in range(length):
@@ -54,6 +66,21 @@ class PipeChannel(object):
             assert len(data) == 1
             result += data
         return result
+
+    def read_frame(self):
+        header = self.recv(8)
+        if len(header) < 8:
+            return None
+
+        try:
+            size = int(header, 16)
+        except ValueError:
+            return None
+
+        data = self.recv(size)
+        if len(data) < size:
+            return None
+        return data
 
 
 class Pipe(object):
@@ -78,16 +105,10 @@ class MockServer(object):
         return self.pipe.endpointb
 
     def write(self, data):
-        header = '%08X' % len(data)
-        self.pipe.endpointa.write(header + data)
+        self.pipe.endpointa.write_frame(data)
 
     def write_packet(self, name, message):
-        packet = packet_pb2.Packet()
-        packet.stamp.sec = 0
-        packet.stamp.nsec = 0
-        packet.type = name
-        packet.serialized_data = message.SerializeToString()
-        self.write(packet.SerializeToString())
+        self.pipe.endpointa.write_packet(name, message)
 
     def init_sequence(self):
         self.write_packet(
@@ -103,18 +124,10 @@ class MockServer(object):
             publishers_pb2.Publishers(publisher=[]))
 
     def read_packet(self):
-        header = self.pipe.endpointa.recv(8)
-        if len(header) < 8:
-            return None
+        data = self.pipe.endpointa.read_frame()
+        if data is None:
+            return data
 
-        try:
-            size = int(header, 16)
-        except ValueError:
-            return None
-
-        data = self.pipe.endpointa.recv(size)
-        if len(data) < size:
-            return None
         return data
 
 
@@ -128,11 +141,30 @@ class ManagerFixture(object):
         eventlet.connect = mock.MagicMock(
             return_value=self.server.client_socket())
 
+        self.old_listen = eventlet.listen
+        eventlet.listen = self.listen
+
+        self.old_serve = eventlet.serve
+        eventlet.serve = self.serve
+
         self.manager = pygazebo.Manager(('localhost', 12345))
         self.server.init_sequence()
 
+    def listen(self, addr, family=2, backlog=50):
+        class FakeSock(object):
+            def getsockname(self):
+                return ('localhost', 12345)
+        return FakeSock()
+
+    def serve(self, sock, handle, concurrency=1000):
+        self.serve_handle = handle
+        queue = eventlet.queue.Queue(0)
+        queue.get(block=True)  # wait forever
+
     def done(self):
         eventlet.connect = self.old_connect
+        eventlet.listen = self.old_listen
+        eventlet.serve = self.old_serve
 
         if self.manager is not None:
             if self.manager._client_thread._exit_event.ready():
@@ -190,3 +222,31 @@ class TestPygazebo(object):
             packet.serialized_data)
         assert subscribe.topic == 'subscribetopic'
         assert subscribe.msg_type == 'othermsgtype'
+
+    def test_send(self, manager):
+        eventlet.spawn(manager.server.read_packet)
+        publisher = manager.manager.advertise('mytopic2', 'msgtype')
+
+        # Now pretend we are a remote host who wants to subscribe to
+        # this topic.
+        pipe = Pipe()
+        eventlet.spawn_n(manager.serve_handle, pipe.endpointa, None)
+
+        subscribe = subscribe_pb2.Subscribe()
+        subscribe.topic = 'mytopic2'
+        subscribe.msg_type = 'msgtype'
+        subscribe.host = 'localhost'
+        subscribe.port = 54321
+
+        pipe.endpointb.write_packet('sub', subscribe)
+
+        # At this point, anything we "publish" should end up being
+        # written to this pipe.
+        read_data = eventlet.spawn(pipe.endpointb.read_frame)
+
+        sample_message = gz_string_pb2.GzString()
+        sample_message.data = 'testdata'
+        publisher.publish(sample_message)
+
+        data_frame = read_data.wait()
+        assert data_frame == sample_message.SerializeToString()
