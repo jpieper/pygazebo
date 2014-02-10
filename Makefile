@@ -57,12 +57,10 @@ coverage:
 	open htmlcov/index.html
 
 docs:
-	rm -f docs/pygazebo.rst
-	rm -f docs/modules.rst
-	sphinx-apidoc -o docs/ pygazebo
+	sphinx-apidoc -o docs/ pygazebo pygazebo/msg
 	$(MAKE) -C docs clean
 	$(MAKE) -C docs html
-	open docs/_build/html/index.html
+	xdg-open docs/_build/html/index.html
 
 release: clean
 	python setup.py sdist upload

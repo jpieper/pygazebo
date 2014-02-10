@@ -7,3 +7,4 @@
 *.egg
 .tox
 .coverage
+_build
