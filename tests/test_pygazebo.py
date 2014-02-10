@@ -22,6 +22,7 @@ from pygazebo.msg import gz_string_v_pb2
 from pygazebo.msg import packet_pb2
 from pygazebo.msg import publishers_pb2
 from pygazebo.msg import publish_pb2
+from pygazebo.msg import subscribe_pb2
 
 
 class PipeChannel(object):
@@ -168,3 +169,24 @@ class TestPygazebo(object):
         advertise = publish_pb2.Publish.FromString(packet.serialized_data)
         assert advertise.topic == 'mytopic'
         assert advertise.msg_type == 'mymsgtype'
+
+    def test_subscribe(self, manager):
+        received_data = []
+
+        def callback(data):
+            received_data.append(data)
+
+        listen = eventlet.spawn(manager.server.read_packet)
+        subscriber = manager.manager.subscribe(
+            'subscribetopic', 'othermsgtype', callback)
+        assert subscriber is not None
+        packet_data = listen.wait()
+
+        # We should have received a subscribe for this topic.
+        packet = packet_pb2.Packet.FromString(packet_data)
+        assert packet.type == 'subscribe'
+
+        subscribe = subscribe_pb2.Subscribe.FromString(
+            packet.serialized_data)
+        assert subscribe.topic == 'subscribetopic'
+        assert subscribe.msg_type == 'othermsgtype'
