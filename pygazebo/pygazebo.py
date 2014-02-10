@@ -238,7 +238,7 @@ class Manager(object):
     then allows the client to either advertise topics for publication,
     or to listen to other publishers.
     """
-    def __init__(self, address):
+    def __init__(self, address=('localhost', 11345)):
         """Create a connection to the Gazebo server.
 
         Args:
