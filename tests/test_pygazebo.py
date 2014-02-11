@@ -121,7 +121,12 @@ class MockServer(object):
 
         self.write_packet(
             'publishers_init',
-            publishers_pb2.Publishers(publisher=[]))
+            publishers_pb2.Publishers(publisher=[
+                    publish_pb2.Publish(topic='inittopic1',
+                                        msg_type='msgs.Fake',
+                                        host='myhost',
+                                        port=1234),
+                    ]))
 
     def read_packet(self):
         data = self.pipe.endpointa.read_frame()
@@ -185,7 +190,10 @@ class TestPygazebo(object):
 
     def test_connect(self, manager):
         # Nothing beyond the base fixture is required for this test.
-        pass
+        assert manager.manager.namespaces() == ['a', 'b']
+        publications = manager.manager.publications()
+        assert len(publications) == 1
+        assert publications[0] == ('inittopic1', 'msgs.Fake')
 
     def test_advertise(self, manager):
         # Start listening for things in the server.

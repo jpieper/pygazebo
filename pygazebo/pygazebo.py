@@ -311,6 +311,22 @@ class Manager(object):
         self._subscribers[topic_name] = result
         return result
 
+    def publications(self):
+        """Enumerate the current list of publications.
+
+        :returns: the currently known publications
+        :rtype: list of (topic_name, msg_type)
+        """
+        return [ (x.topic, x.msg_type) for x in self._publisher_records ]
+
+    def namespaces(self):
+        """Enumerate the currently known namespaces.
+
+        :returns: the currently known namespaces
+        :rtype: list of strings
+        """
+        return self._namespaces
+
     def _run(self):
         """Starts the connection and processes events."""
         logger.debug('Manager.run')
