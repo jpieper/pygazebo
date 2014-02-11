@@ -36,6 +36,7 @@ setup(
     url='https://github.com/jpieper/pygazebo',
     packages=[
         'pygazebo',
+        'pygazebo.msg',
     ],
     package_dir={'pygazebo': 'pygazebo'},
     include_package_data=True,

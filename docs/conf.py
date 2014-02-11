@@ -243,7 +243,7 @@ man_pages = [
 #  dir menu entry, description, category)
 texinfo_documents = [
   ('index', 'pygazebo', u'pygazebo Documentation',
-   u'Josh Pieper', 'pygazebo', 'One line description of project.',
+   u'Josh Pieper', 'pygazebo', 'Python bindings for Gazebo simulator',
    'Miscellaneous'),
 ]
 
@@ -261,3 +261,14 @@ texinfo_documents = [
 
 html_theme = "nature"
 exclude_patterns = []
+
+autodoc_default_flags = ['members', 'no-undoc-members']
+
+def autodoc_skip_member(app, what, name, obj, skip, options):
+    if name in ['SetInParent', 'IsInitialized', 'FindInitializationErrors']:
+        return True
+    return None
+
+def setup(app):
+    app.connect('autodoc-skip-member', autodoc_skip_member)
+    

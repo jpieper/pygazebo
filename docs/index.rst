@@ -9,7 +9,7 @@ Welcome to pygazebo's documentation!
 Contents:
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    readme
    installation
@@ -17,6 +17,8 @@ Contents:
    contributing
    authors
    history
+   pygazebo
+   pygazebo.msg
 
 Indices and tables
 ==================

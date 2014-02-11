@@ -57,7 +57,8 @@ coverage:
 	open htmlcov/index.html
 
 docs:
-	sphinx-apidoc -o docs/ pygazebo pygazebo/msg
+	python generate_msg_docs.py > docs/pygazebo.msg.rst
+	sphinx-apidoc -o docs/ pygazebo
 	$(MAKE) -C docs clean
 	$(MAKE) -C docs html
 	xdg-open docs/_build/html/index.html
