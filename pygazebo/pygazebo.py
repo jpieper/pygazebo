@@ -317,7 +317,7 @@ class Manager(object):
         :returns: the currently known publications
         :rtype: list of (topic_name, msg_type)
         """
-        return [ (x.topic, x.msg_type) for x in self._publisher_records ]
+        return [(x.topic, x.msg_type) for x in self._publisher_records]
 
     def namespaces(self):
         """Enumerate the currently known namespaces.

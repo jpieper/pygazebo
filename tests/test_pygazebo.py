@@ -122,11 +122,11 @@ class MockServer(object):
         self.write_packet(
             'publishers_init',
             publishers_pb2.Publishers(publisher=[
-                    publish_pb2.Publish(topic='inittopic1',
-                                        msg_type='msgs.Fake',
-                                        host='myhost',
-                                        port=1234),
-                    ]))
+                publish_pb2.Publish(topic='inittopic1',
+                                    msg_type='msgs.Fake',
+                                    host='myhost',
+                                    port=1234),
+                ]))
 
     def read_packet(self):
         data = self.pipe.endpointa.read_frame()
