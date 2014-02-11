@@ -8,3 +8,4 @@
 .tox
 .coverage
 _build
+dist
