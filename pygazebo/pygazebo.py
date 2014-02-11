@@ -23,11 +23,11 @@ class ParseError(RuntimeError):
 class Publisher(object):
     """Publishes data to the Gazebo publish-subscribe bus.
 
-    Attributes:
-      topic (str): The topic name this publisher is using.
-      msg_type (str): The Gazebo message type.
+    :ivar topic: (string) the topic name this publisher is using
+    :ivar msg_type: (string) the Gazebo message type
     """
     def __init__(self):
+        """:class:`Publisher` should not be directly created"""
         self.topic = None
         self.msg_type = None
         self._listeners = []
@@ -36,8 +36,8 @@ class Publisher(object):
     def publish(self, msg):
         """Publish a new instance of this data.
 
-        Args:
-          msg: A google.protobuf.message.Message derived instance
+        :param msg: the message to publish
+        :type msg: :class:`google.protobuf.Message` instance
         """
         self._publish_impl(msg)
 
@@ -48,8 +48,8 @@ class Publisher(object):
     def remove(self):
         """Stop advertising this topic.
 
-        Note:
-          Once `remove` is called, no further methods should be called.
+        Note: Once :func:`remove` is called, no further methods should
+        be called.
         """
         raise NotImplementedError()
 
@@ -80,12 +80,12 @@ class Publisher(object):
 class Subscriber(object):
     """Receives data from the Gazebo publish-subscribe bus.
 
-    Attributes:
-      topic (str): The topic name this subscriber is listening for.
-      msg_type (str): The Gazebo message type.
-      callback (function): The current function to invoke.
+    :ivar topic: (str) The topic name this subscriber is listening for.
+    :ivar msg_type: (str) The Gazebo message type.
+    :ivar callback: (function) The current function to invoke.
     """
     def __init__(self, local_host, local_port):
+        """:class:`Subscriber` should not be directly created"""
         logger.debug('Subscriber.__init__', local_host, local_port)
         self.topic = None
         self.msg_type = None
@@ -98,8 +98,8 @@ class Subscriber(object):
     def remove(self):
         """Stop listening for this topic.
 
-        Note:
-          Once `remove` is called, the callback will no longer be invoked.
+        Note: Once :func:`remove` is called, the callback will no
+        longer be invoked.
         """
         raise NotImplementedError()
 
@@ -218,11 +218,10 @@ class _Connection(object):
 class _PublisherRecord(object):
     """Information about a remote topic.
 
-    Attributes:
-      topic (str): The string description of the topic.
-      msg_type (str): The Gazebo message type string.
-      host (str): The remote host of the topic publisher.
-      port (int): The remote port of the topic publisher.
+    :ivar topic: (str) the string description of the topic
+    :ivar msg_type: (str) the Gazebo message type string
+    :ivar host: (str) the remote host of the topic publisher
+    :ivar port: (int) the remote port of the topic publisher
     """
     def __init__(self, msg):
         self.topic = msg.topic
@@ -232,20 +231,16 @@ class _PublisherRecord(object):
 
 
 class Manager(object):
-    """Primary connection to the Gazebo server.
+    """Create a connection to the Gazebo server.
 
     The Manager instance creates a connection to the Gazebo server,
     then allows the client to either advertise topics for publication,
     or to listen to other publishers.
+
+    :param address: destination TCP server
+    :type address: a tuple of ('host', port)
     """
     def __init__(self, address=('localhost', 11345)):
-        """Create a connection to the Gazebo server.
-
-        Args:
-          address: A tuple of (host, port), where the host is a
-              string, and the port is an integer.  These are used to
-              connect to the Gazebo server.
-        """
         self._address = address
         self._master = _Connection()
         self._server = _Connection()
@@ -259,13 +254,11 @@ class Manager(object):
     def advertise(self, topic_name, msg_type):
         """Inform the Gazebo server of a topic we will publish.
 
-        Args:
-          topic_name (str): The topic to send data on.
-          msg_type (str): The Gazebo message type string.
-
-        Returns:
-          A ``Publisher`` instance which can be used to send data on
-          this topic.
+        :param topic_name: the topic to send data on
+        :type topic_name: string
+        :param msg_type: the Gazebo message type string
+        :type msg_type: string
+        :rtype: :class:`Publisher`
         """
         if topic_name in self._publishers:
             raise RuntimeError('multiple publishers for: ' + topic_name)
@@ -287,17 +280,15 @@ class Manager(object):
     def subscribe(self, topic_name, msg_type, callback):
         """Request the Gazebo server send messages on a specific topic.
 
-        Args:
-          topic_name (str): The topic for which data will be sent.
-          msg_type (str): The Gazebo message type string.
-          callback (function): A callback to invoke when new data on
+        :param topic_name: the topic for which data will be sent
+        :type topic_name: string
+        :param msg_type: the Gazebo message type string
+        :type msg_type: string
+        :param callback: A callback to invoke when new data on
               this topic is received.  The callback will be invoked
               with raw binary data.  It is expected to deserialize the
-              information using the appropriate protobuf definition.
-
-        Returns:
-          A ``Subscriber`` instance which can be used to update the
-          callback or stop the subscription.
+              message using the appropriate protobuf definition.
+        :rtype: :class:`Subscriber`
         """
 
         if topic_name in self._subscribers:
