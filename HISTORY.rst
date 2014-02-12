@@ -3,8 +3,7 @@
 History
 -------
 
-2.2.1-2014.1 (2014-02-08)
+2.2.1-2014.1 (2014-02-11)
 ++++++++++++++++++
 
-* TODO: Not yet finalized.
 * First release on PyPI.
