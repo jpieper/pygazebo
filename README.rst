@@ -1,6 +1,6 @@
-===============================
+========
 pygazebo
-===============================
+========
 
 .. image:: https://travis-ci.org/jpieper/pygazebo.png?branch=develop
         :target: https://travis-ci.org/jpieper/pygazebo
