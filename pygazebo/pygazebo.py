@@ -143,6 +143,11 @@ class _Connection(object):
     server.  In either case, it provides methods to read and write
     structured data on the socket.
     """
+
+    # Do all raw socket reads and writes in amounts no larger than
+    # this.
+    BUF_SIZE = 16384
+
     def __init__(self):
         self.address = None
         self.socket = None
@@ -174,9 +179,16 @@ class _Connection(object):
         except ValueError:
             raise ParseError('invalid header: ' + header)
 
-        data = self.socket.recv(size)
-        if len(data) < size:
-            return None
+        data = ''
+
+        # Read in BUF_SIZE increments.
+        while len(data) < size:
+            this_size = min(size - len(data), self.BUF_SIZE)
+            this_data = self.socket.recv(this_size)
+            if len(this_data) == 0:
+                return None
+            data += this_data
+
         return data
 
     def read(self):
@@ -187,13 +199,19 @@ class _Connection(object):
         packet = msg.packet_pb2.Packet.FromString(data)
         return packet
 
+    def send_pieces(self, data):
+        start = 0
+        while start < len(data):
+            self.socket.send(data[start:start + self.BUF_SIZE])
+            start += self.BUF_SIZE
+
     def write(self, message):
         self._socket_ready.wait()
 
         data = message.SerializeToString()
 
         header = '%08X' % len(data)
-        self.socket.send(header + data)
+        self.send_pieces(header + data)
 
     def write_packet(self, name, message):
         packet = msg.packet_pb2.Packet()

@@ -43,13 +43,20 @@ class PipeChannel(object):
         self.write(data)
 
     def write(self, data):
+        assert len(data) <= 16384
         for x in data:
             assert len(x) == 1
             self.other.queue.put(x, block=True, timeout=1.0)
 
-    def write_frame(self, data):
-        header = '%08X' % len(data)
-        self.write(header + data)
+    def write_frame(self, payload):
+        header = '%08X' % len(payload)
+
+        data = header + payload
+
+        start = 0
+        while start < len(data):
+            self.write(data[start:start + 1000])
+            start += 1000
 
     def write_packet(self, name, message):
         packet = packet_pb2.Packet()
@@ -60,6 +67,7 @@ class PipeChannel(object):
         self.write_frame(packet.SerializeToString())
 
     def recv(self, length):
+        assert length <= 16384
         result = ''
         for x in range(length):
             data = self.queue.get(block=True, timeout=1.0)
@@ -77,9 +85,14 @@ class PipeChannel(object):
         except ValueError:
             return None
 
-        data = self.recv(size)
-        if len(data) < size:
-            return None
+        data = ''
+        while len(data) < size:
+            this_size = min(size - len(data), 1000)
+            this_data = self.recv(this_size)
+            if len(this_data) == 0:
+                return None
+            data += this_data
+
         return data
 
 
@@ -250,11 +263,20 @@ class TestPygazebo(object):
 
         # At this point, anything we "publish" should end up being
         # written to this pipe.
-        read_data = eventlet.spawn(pipe.endpointb.read_frame)
+        read_data1 = eventlet.spawn(pipe.endpointb.read_frame)
 
         sample_message = gz_string_pb2.GzString()
         sample_message.data = 'testdata'
         publisher.publish(sample_message)
 
-        data_frame = read_data.wait()
+        data_frame = read_data1.wait()
+        assert data_frame == sample_message.SerializeToString()
+
+        # Test sending a very large message, it should require no
+        # individual writes which are too large.
+        read_data2 = eventlet.spawn(pipe.endpointb.read_frame)
+        sample_message.data = ' ' * 100000
+        publisher.publish(sample_message)
+
+        data_frame = read_data2.wait()
         assert data_frame == sample_message.SerializeToString()
