@@ -3,7 +3,7 @@
 History
 -------
 
-2.2.1-2014.2 (2014-03-20)
+2.2.1-2014.2 (2014-06-04)
 +++++++++++++++++++++++++
 
 * Properly support sending and receiving large messages.
