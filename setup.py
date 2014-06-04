@@ -28,7 +28,7 @@ class PyTest(TestCommand):
 
 setup(
     name='pygazebo',
-    version='2.2.1-2014.1',
+    version='2.2.1-2014.2',
     description='Python bindings for the Gazebo multi-robot simulator.',
     long_description=readme + '\n\n' + history,
     author='Josh Pieper',
