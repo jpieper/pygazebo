@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import eventlet
+try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+
 import logging
 import math
+import socket
 import time
 
 import msg
@@ -20,6 +25,32 @@ class ParseError(RuntimeError):
     pass
 
 
+class Event(object):
+    """This class provides nearly identical functionality to
+    asyncio.Event, but does not require coroutines."""
+    def __init__(self):
+        self.callbacks = []
+        self.clear()
+
+    def clear(self):
+        self._set = False
+
+    def is_set(self):
+        return self._set
+
+    def wait(self, callback):
+        if self._set:
+            asyncio.get_event_loop().call_soon(callback)
+        else:
+            self.callbacks.append(callback)
+
+    def set(self):
+        self._set = True
+        for callback in self.callbacks:
+            asyncio.get_event_loop().call_soon(callback)
+        self.callbacks = []
+
+
 class Publisher(object):
     """Publishes data to the Gazebo publish-subscribe bus.
 
@@ -31,19 +62,22 @@ class Publisher(object):
         self.topic = None
         self.msg_type = None
         self._listeners = []
-        self._first_listener_ready = eventlet.event.Event()
+        self._first_listener_ready = Event()
 
     def publish(self, msg):
-        """Publish a new instance of this data.
+        """Publish a new instance of this data.  Returns a Future.
 
         :param msg: the message to publish
         :type msg: :class:`google.protobuf.Message` instance
         """
-        self._publish_impl(msg)
+        return self._publish_impl(msg)
 
     def wait_for_listener(self):
-        """Block (using eventlet) until at least one listener exists."""
-        self._first_listener_ready.wait()
+        """Return a Future which is complete when at least one listener is
+        present."""
+        result = asyncio.Future()
+        self._first_listener_ready.wait(lambda: result.set_result(None))
+        return result
 
     def remove(self):
         """Stop advertising this topic.
@@ -53,28 +87,37 @@ class Publisher(object):
         """
         raise NotImplementedError()
 
+    class WriteFuture(asyncio.Future):
+        def __init__(self, publisher, connections):
+            super(Publisher.WriteFuture, self).__init__(self)
+
+            self.publisher = publisher
+            self.connections = dict((x, True) for x in connections)
+
+        def handle_done(self, connection):
+            del self.connections[connection]
+
+            # if (future.exception() is not None and
+            #     connection in self.publisher._listeners):
+            #     self.publisher._listeners.remove(connection)
+
+            if len(self.connections) == 0:
+                self.set_result(None)
+
     def _publish_impl(self, message):
+        result = Publisher.WriteFuture(self, self._listeners[:])
+
         # Try writing to each of our listeners.  If any give an error,
         # disconnect them.
-        to_remove = []
         for connection in self._listeners:
-            try:
-                connection.write(message)
-            except:
-                # TODO jpieper: We should probably catch only a subset
-                # of exceptions here.
+            connection.write(
+                message, lambda: result.handle_done(connection))
 
-                # Assume that the remote end closed.
-                connection.socket.close()
-                to_remove.append(connection)
-
-        for x in to_remove:
-            self._listeners.remove(x)
+        return result
 
     def _connect(self, connection):
         self._listeners.append(connection)
-        if not self._first_listener_ready.ready():
-            self._first_listener_ready.send()
+        self._first_listener_ready.set()
 
 
 class Subscriber(object):
@@ -86,7 +129,7 @@ class Subscriber(object):
     """
     def __init__(self, local_host, local_port):
         """:class:`Subscriber` should not be directly created"""
-        logger.debug('Subscriber.__init__', local_host, local_port)
+        logger.debug('Subscriber.__init__ %s %d', local_host, local_port)
         self.topic = None
         self.msg_type = None
         self.callback = None
@@ -104,14 +147,17 @@ class Subscriber(object):
         raise NotImplementedError()
 
     def _start_connect(self, pub):
-        # Do the actual work in an eventlet infinite loop.
-        eventlet.spawn_n(self._connect, pub)
+        # Do the actual work in a new callback.
+        asyncio.get_event_loop().call_soon(self._connect, pub)
 
     def _connect(self, pub):
         connection = _Connection()
 
         # Connect to the remote provider.
-        connection.connect((pub.host, pub.port))
+        connection.connect((pub.host, pub.port),
+                           lambda: self._connect2(connection, pub))
+
+    def _connect2(self, connection, pub):
         self._connections.append(connection)
 
         # Send the initial message, which is encapsulated inside of a
@@ -123,16 +169,19 @@ class Subscriber(object):
         to_send.msg_type = pub.msg_type
         to_send.latching = False
 
-        connection.write_packet('sub', to_send)
+        connection.write_packet('sub', to_send,
+                                lambda: self._connect3(connection))
 
-        # Now wait forever reading messages.  For some reason, the
-        # received data is not encapsulated in an outer packet.
-        while True:
-            data = connection.read_raw()
-            if data is None:
-                self._connections.remove(connection)
-                return
-            self.callback(data)
+    def _connect3(self, connection):
+        connection.read_raw(lambda data: self._handle_read(connection, data))
+
+    def _handle_read(self, connection, data):
+        if data is None:
+            self._connections.remove(connection)
+            return
+
+        self.callback(data)
+        self._connect3(connection)
 
 
 class _Connection(object):
@@ -153,83 +202,142 @@ class _Connection(object):
         self.socket = None
         self._local_host = None
         self._local_port = None
-        self._socket_ready = eventlet.event.Event()
-        self._local_ready = eventlet.event.Event()
+        self._socket_ready = Event()
+        self._local_ready = Event()
 
-    def connect(self, address):
+    def connect(self, address, callback):
         logger.debug('Connection.connect')
         self.address = address
-        self.socket = eventlet.connect(self.address)
-        self._socket_ready.send(True)
+        loop = asyncio.get_event_loop()
+        self.socket = socket.socket()
+        future = asyncio.async(loop.sock_connect(self.socket, address))
+
+        def callback_impl(future):
+            self._socket_ready.set()
+            callback(future.result())
+
+        future.add_done_callback(callback_impl)
 
     def serve(self, callback):
-        self.socket = eventlet.listen(('', 0))
-        self._local_host, self._local_port = self.socket.getsockname()
-        self._local_ready.send(True)
-        eventlet.serve(self.socket, callback)
+        """Start listening for new connections.  Invoke callback every
+        time a new connection is available."""
 
-    def read_raw(self):
+        self.socket = socket.socket()
+        self.socket.bind(('', 0))
+        self._local_host, self._local_port = self.socket.getsockname()
+        self.socket.listen(5)
+        self._local_ready.set()
+
+        self.start_accept(callback)
+
+    def start_accept(self, callback):
+        loop = asyncio.get_event_loop()
+        future = asyncio.async(loop.sock_accept(self.socket))
+        future.add_done_callback(
+            lambda future: self.handle_accept(callback, future))
+
+    def handle_accept(self, callback, future):
+        loop = asyncio.get_event_loop()
+        loop.call_soon(lambda: self.start_accept(callback))
+
+        conn, address = future.result()
+        callback(conn, address)
+
+    def read_raw(self, callback):
         logger.debug('Connection.read_raw')
-        header = self.socket.recv(8)
+        loop = asyncio.get_event_loop()
+        future = asyncio.async(loop.sock_recv(self.socket, 8))
+        future.add_done_callback(
+            lambda future: self.handle_read_raw_header(future, callback))
+
+    def handle_read_raw_header(self, future, callback):
+        header = future.result()
         if len(header) < 8:
-            return None
+            callback(None)
+            return
 
         try:
             size = int(header, 16)
         except ValueError:
             raise ParseError('invalid header: ' + header)
 
-        data = ''
+        self.start_read_data('', size, callback)
 
-        # Read in BUF_SIZE increments.
-        while len(data) < size:
-            this_size = min(size - len(data), self.BUF_SIZE)
-            this_data = self.socket.recv(this_size)
-            if len(this_data) == 0:
-                return None
-            data += this_data
+    def start_read_data(self, starting_data, total_size, callback):
+        if len(starting_data) == total_size:
+            callback(starting_data)
+            return
 
-        return data
+        loop = asyncio.get_event_loop()
+        future = asyncio.async(
+            loop.sock_recv(self.socket,
+                           min(total_size - len(starting_data),
+                               self.BUF_SIZE)))
+        future.add_done_callback(
+            lambda future: self.handle_read_data(
+                future, starting_data, total_size, callback))
 
-    def read(self):
+    def handle_read_data(self, future, starting_data, total_size, callback):
+        data = future.result()
+        if len(data) == 0:
+            callback(None)
+            return
+
+        data = starting_data + data
+        self.start_read_data(data, total_size, callback)
+
+    def read(self, callback):
         logger.debug('Connection.read')
-        data = self.read_raw()
+        self.read_raw(lambda data: self.handle_read(data, callback))
+
+    def handle_read(self, data, callback):
         if data is None:
-            return None
+            callback(None)
+            return
+
         packet = msg.packet_pb2.Packet.FromString(data)
-        return packet
+        callback(packet)
 
-    def send_pieces(self, data):
-        start = 0
-        while start < len(data):
-            self.socket.send(data[start:start + self.BUF_SIZE])
-            start += self.BUF_SIZE
+    def send_pieces(self, data, callback):
+        if len(data) == 0:
+            callback()
+            return
 
-    def write(self, message):
-        self._socket_ready.wait()
+        to_send = min(len(data), self.BUF_SIZE)
+        this_send = data[:to_send]
+        next_send = data[to_send:]
 
+        loop = asyncio.get_event_loop()
+        future = asyncio.async(loop.sock_sendall(self.socket, this_send))
+        future.add_done_callback(
+            lambda future: self.send_pieces(next_send, callback))
+
+    def write(self, message, callback):
+        self._socket_ready.wait(lambda: self.ready_write(message, callback))
+
+    def ready_write(self, message, callback):
         data = message.SerializeToString()
 
         header = '%08X' % len(data)
-        self.send_pieces(header + data)
+        self.send_pieces(header + data, callback)
 
-    def write_packet(self, name, message):
+    def write_packet(self, name, message, callback):
         packet = msg.packet_pb2.Packet()
         cur_time = time.time()
         packet.stamp.sec = int(cur_time)
         packet.stamp.nsec = int(math.fmod(cur_time, 1) * 1e9)
         packet.type = name
         packet.serialized_data = message.SerializeToString()
-        self.write(packet)
+        self.write(packet, callback)
 
     @property
     def local_host(self):
-        self._local_ready.wait()
+        assert self._local_ready.is_set()
         return self._local_host
 
     @property
     def local_port(self):
-        self._local_ready.wait()
+        assert self._local_ready.is_set()
         return self._local_port
 
 
@@ -257,8 +365,9 @@ class Manager(object):
 
     :param address: destination TCP server
     :type address: a tuple of ('host', port)
+    :param callback: callback to be invoked once the connection is complete
     """
-    def __init__(self, address=('localhost', 11345)):
+    def __init__(self, address=('localhost', 11345), callback=None):
         self._address = address
         self._master = _Connection()
         self._server = _Connection()
@@ -267,7 +376,8 @@ class Manager(object):
         self._publishers = {}
         self._subscribers = {}
 
-        self._client_thread = eventlet.spawn(self._run)
+        loop = asyncio.get_event_loop()
+        loop.call_soon(self._run, callback)
 
     def advertise(self, topic_name, msg_type):
         """Inform the Gazebo server of a topic we will publish.
@@ -287,7 +397,7 @@ class Manager(object):
         to_send.host = self._server.local_host
         to_send.port = self._server.local_port
 
-        self._master.write_packet('advertise', to_send)
+        self._master.write_packet('advertise', to_send, lambda: None)
         result = Publisher()
         result.topic = topic_name
         result.msg_type = msg_type
@@ -319,7 +429,7 @@ class Manager(object):
         to_send.port = self._server.local_port
         to_send.latching = False
 
-        self._master.write_packet('subscribe', to_send)
+        self._master.write_packet('subscribe', to_send, lambda: None)
 
         result = Subscriber(local_host=to_send.host,
                             local_port=to_send.port)
@@ -345,22 +455,30 @@ class Manager(object):
         """
         return self._namespaces
 
-    def _run(self):
+    def _run(self, callback):
         """Starts the connection and processes events."""
         logger.debug('Manager.run')
-        self._master.connect(self._address)
-        self._server_thread = eventlet.spawn(
-            self._server.serve, self._handle_server_connection)
+        self._master.connect(
+            self._address,
+            lambda ignored: self.handle_connect(ignored, callback))
+
+    def handle_connect(self, ignored, callback):
+        self._server.serve(self._handle_server_connection)
 
         # Read and process the required three initialization packets.
-        initData = self._master.read()
+        self._master.read(lambda data: self.handle_initdata(data, callback))
+
+    def handle_initdata(self, initData, callback):
         if initData.type != 'version_init':
             raise ParseError('unexpected initialization packet: ' +
                              initData.type)
         self._handle_version_init(
             msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
 
-        namespacesData = self._master.read()
+        self._master.read(lambda data: self.handle_namespacesdata(
+            data, callback))
+
+    def handle_namespacesdata(self, namespacesData, callback):
 
         # NOTE: This type string is mis-spelled in the official client
         # and server as of 2.2.1.  Presumably they'll just leave it be
@@ -372,7 +490,10 @@ class Manager(object):
             msg.gz_string_v_pb2.GzString_V.FromString(
                 namespacesData.serialized_data))
 
-        publishersData = self._master.read()
+        self._master.read(lambda data: self.handle_publishersdata(
+            data, callback))
+
+    def handle_publishersdata(self, publishersData, callback):
         if publishersData.type != 'publishers_init':
             raise ParseError('unexpected publishers init packet: ' +
                              publishersData.type)
@@ -383,31 +504,45 @@ class Manager(object):
         logger.debug('Connection: initialized!')
         self._initialized = True
 
-        # Enter the normal message dispatch loop.
-        while True:
-            data = self._master.read()
-            if data is None:
-                return
+        loop = asyncio.get_event_loop()
+        loop.call_soon(callback)
+        self.start_normal_read()
 
-            self._process_message(data)
+    def start_normal_read(self):
+        # Enter the normal message dispatch loop.
+        self._master.read(self.handle_normal_read)
+
+    def handle_normal_read(self, data):
+        if data is None:
+            return
+
+        self.start_normal_read()
+        self._process_message(data)
 
     def _handle_server_connection(self, socket, remote_address):
         this_connection = _Connection()
         this_connection.socket = socket
-        this_connection._socket_ready.send(True)
+        this_connection._socket_ready.set()
 
-        while True:
-            message = this_connection.read()
-            if message is None:
-                return
-            if message.type == 'sub':
-                self._handle_server_sub(
-                    this_connection,
-                    msg.subscribe_pb2.Subscribe.FromString(
-                        message.serialized_data))
-            else:
-                logger.warn('Manager.handle_server_connection unknown msg:',
-                            msg.type)
+        self._read_server_data(this_connection)
+
+    def _read_server_data(self, connection):
+        connection.read(
+            lambda data: self._handle_server_data(data, connection))
+
+    def _handle_server_data(self, message, connection):
+        if message is None:
+            return
+        if message.type == 'sub':
+            self._handle_server_sub(
+                connection,
+                msg.subscribe_pb2.Subscribe.FromString(
+                    message.serialized_data))
+        else:
+            logger.warn('Manager.handle_server_connection unknown msg:',
+                        msg.type)
+
+        self._read_server_data(connection)
 
     def _handle_server_sub(self, this_connection, msg):
         if not msg.topic in self._publishers:
@@ -439,7 +574,8 @@ class Manager(object):
 
     def _handle_topic_namespaces_init(self, msg):
         self._namespaces = msg.data
-        logger.debug('Manager.handle_topic_namespaces_init', self._namespaces)
+        logger.debug('Manager.handle_topic_namespaces_init: ' +
+                     str(self._namespaces))
 
     def _handle_publishers_init(self, msg):
         logger.debug('Manager.handle_publishers_init')
@@ -502,3 +638,7 @@ class Manager(object):
         'unsubscribe': (_handle_unsubscribe, msg.subscribe_pb2.Subscribe),
         'unadvertise': (_handle_unadvertise, msg.publish_pb2.Publish),
         }
+
+import sys
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler(sys.stdout))

@@ -8,13 +8,18 @@ test_pygazebo
 Tests for `pygazebo` module.
 """
 
-import eventlet
+# TODO:
+#  * Test that connections close when write errors occur.
+#  * Do something that requires a subscriber to make a connection
+
+try:
+    import asyncio
+except ImportError:
+    import trollius as asyncio
+
 import mock
 import pytest
-
-# TO TEST:
-#  * normal cases
-#  * all protocol error handling
+import socket
 
 from pygazebo import pygazebo
 from pygazebo.msg import gz_string_pb2
@@ -26,10 +31,8 @@ from pygazebo.msg import subscribe_pb2
 
 
 class PipeChannel(object):
-    """One half of a simulated pipe, implemented using eventlet.
-
-    Writes and reads block until the other side is available to
-    complete the transaction.
+    """One half of a simulated pipe, implemented using asyncio and
+    callbacks.
 
     Attributes:
      other (PipeChannel): The opposite direction pair for this channel.
@@ -37,48 +40,66 @@ class PipeChannel(object):
     other = None
 
     def __init__(self):
-        self.queue = eventlet.queue.Queue(0)
+        self.queue = asyncio.Queue(1)
 
-    def send(self, data):
-        self.write(data)
+    def send(self, data, callback):
+        self.write(data, callback)
 
-    def write(self, data):
+    def write(self, data, callback):
         assert len(data) <= 16384
-        for x in data:
-            assert len(x) == 1
-            self.other.queue.put(x, block=True, timeout=1.0)
+        if len(data) == 0:
+            callback()
+            return
 
-    def write_frame(self, payload):
+        future = asyncio.async(self.other.queue.put(data[0:1]))
+        future.add_done_callback(lambda future: self.write(data[1:], callback))
+
+    def write_frame(self, payload, callback):
         header = '%08X' % len(payload)
 
         data = header + payload
 
-        start = 0
-        while start < len(data):
-            self.write(data[start:start + 1000])
-            start += 1000
+        self.write_frame_part(data, callback)
 
-    def write_packet(self, name, message):
+    def write_frame_part(self, data, callback):
+        if len(data) == 0:
+            callback()
+            return
+
+        self.write(data[0:1000],
+                   lambda: self.write_frame_part(data[1000:], callback))
+
+    def write_packet(self, name, message, callback):
         packet = packet_pb2.Packet()
         packet.stamp.sec = 0
         packet.stamp.nsec = 0
         packet.type = name
         packet.serialized_data = message.SerializeToString()
-        self.write_frame(packet.SerializeToString())
+        self.write_frame(packet.SerializeToString(), callback)
 
-    def recv(self, length):
+    def recv(self, length, callback):
         assert length <= 16384
-        result = ''
-        for x in range(length):
-            data = self.queue.get(block=True, timeout=1.0)
-            assert len(data) == 1
-            result += data
-        return result
+        self.recv_handler('', '', length, callback)
 
-    def read_frame(self):
-        header = self.recv(8)
+    def recv_handler(self, new_data, old_data, total_size, callback):
+        data = old_data + new_data
+        if len(data) == total_size:
+            callback(data)
+            return
+
+        future = asyncio.async(self.queue.get())
+        future.add_done_callback(
+            lambda future: self.recv_handler(
+                future.result(), data, total_size, callback))
+
+    def read_frame(self, callback):
+        self.recv(
+            8, lambda data: self._read_frame_header(data, callback))
+
+    def _read_frame_header(self, header, callback):
         if len(header) < 8:
-            return None
+            callback(None)
+            return
 
         try:
             size = int(header, 16)
@@ -86,14 +107,19 @@ class PipeChannel(object):
             return None
 
         data = ''
-        while len(data) < size:
-            this_size = min(size - len(data), 1000)
-            this_data = self.recv(this_size)
-            if len(this_data) == 0:
-                return None
-            data += this_data
+        self._read_frame_data('', data, size, callback)
 
-        return data
+    def _read_frame_data(self, new_data, old_data, total_size, callback):
+        data = old_data + new_data
+        if len(data) == total_size:
+            callback(data)
+            return
+
+        this_size = min(total_size - len(data), 1000)
+        self.recv(
+            this_size,
+            lambda new_data: self._read_frame_data(
+                new_data, data, total_size, callback))
 
 
 class Pipe(object):
@@ -117,21 +143,25 @@ class MockServer(object):
     def client_socket(self):
         return self.pipe.endpointb
 
-    def write(self, data):
-        self.pipe.endpointa.write_frame(data)
+    def write(self, data, callback):
+        self.pipe.endpointa.write_frame(data, callback)
 
-    def write_packet(self, name, message):
-        self.pipe.endpointa.write_packet(name, message)
+    def write_packet(self, name, message, callback):
+        self.pipe.endpointa.write_packet(name, message, callback)
 
-    def init_sequence(self):
+    def init_sequence(self, callback):
         self.write_packet(
             'version_init',
-            gz_string_pb2.GzString(data='gazebo 2.2 simversion'))
+            gz_string_pb2.GzString(data='gazebo 2.2 simversion'),
+            lambda: self._init_sequence1(callback))
 
+    def _init_sequence1(self, callback):
         self.write_packet(
             'topic_namepaces_init',
-            gz_string_v_pb2.GzString_V(data=['a', 'b']))
+            gz_string_v_pb2.GzString_V(data=['a', 'b']),
+            lambda: self._init_sequence2(callback))
 
+    def _init_sequence2(self, callback):
         self.write_packet(
             'publishers_init',
             publishers_pb2.Publishers(publisher=[
@@ -139,14 +169,31 @@ class MockServer(object):
                                     msg_type='msgs.Fake',
                                     host='myhost',
                                     port=1234),
-                ]))
+                ]),
+            callback)
 
-    def read_packet(self):
-        data = self.pipe.endpointa.read_frame()
-        if data is None:
-            return data
+    def read_packet(self, callback):
+        self.pipe.endpointa.read_frame(callback)
 
-        return data
+
+class FakeSocket(object):
+    def __init__(self):
+        self.pipe = None
+
+    def bind(self, *args):
+        pass
+
+    def getsockname(self):
+        return ('127.0.0.1', 12345)
+
+    def listen(self, backlog):
+        pass
+
+    def write(self, data, callback):
+        self.pipe.write(data, callback)
+
+    def recv(self, size, callback):
+        self.pipe.recv(size, callback)
 
 
 class ManagerFixture(object):
@@ -154,41 +201,64 @@ class ManagerFixture(object):
         self.manager = None
 
         self.server = MockServer()
+        self.fake_socket = FakeSocket()
 
-        self.old_connect = eventlet.connect
-        eventlet.connect = mock.MagicMock(
-            return_value=self.server.client_socket())
+        self.old_socket = socket.socket
+        socket.socket = mock.MagicMock(
+            return_value=self.fake_socket)
 
-        self.old_listen = eventlet.listen
-        eventlet.listen = self.listen
+        loop = asyncio.get_event_loop()
+        self.old_connect = loop.sock_connect
+        loop.sock_connect = self.connect
 
-        self.old_serve = eventlet.serve
-        eventlet.serve = self.serve
+        self.old_accept = loop.sock_accept
+        loop.sock_accept = self.accept
 
-        self.manager = pygazebo.Manager(('localhost', 12345))
-        self.server.init_sequence()
+        self.old_sock_recv = loop.sock_recv
+        loop.sock_recv = self.recv
 
-    def listen(self, addr, family=2, backlog=50):
-        class FakeSock(object):
-            def getsockname(self):
-                return ('localhost', 12345)
-        return FakeSock()
+        self.old_sock_sendall = loop.sock_sendall
+        loop.sock_sendall = self.sendall
 
-    def serve(self, sock, handle, concurrency=1000):
-        self.serve_handle = handle
-        queue = eventlet.queue.Queue(0)
-        queue.get(block=True)  # wait forever
+        manager_future = asyncio.Future()
+        self.manager = pygazebo.Manager(
+            ('localhost', 12345),
+            lambda: manager_future.set_result(None))
+        self.init_future = asyncio.Future()
+        self.server.init_sequence(lambda: self.init_future.set_result(None))
+
+        asyncio.get_event_loop().run_until_complete(manager_future)
+
+    def connect(self, socket, addr):
+        socket.pipe = self.server.client_socket()
+
+        result = asyncio.Future()
+        result.set_result(None)
+        return result
+
+    def accept(self, sock):
+        result = asyncio.Future()
+        self.serve_future = result
+        return result
+
+    def recv(self, sock, size):
+        result = asyncio.Future()
+        sock.recv(size, lambda data: result.set_result(data))
+        return result
+
+    def sendall(self, sock, data):
+        result = asyncio.Future()
+        sock.write(data, lambda: result.set_result(None))
+        return result
 
     def done(self):
-        eventlet.connect = self.old_connect
-        eventlet.listen = self.old_listen
-        eventlet.serve = self.old_serve
+        socket.socket = self.old_socket
 
-        if self.manager is not None:
-            if self.manager._client_thread._exit_event.ready():
-                self.manager._client_thread.wait()
-            if self.manager._server_thread._exit_event.ready():
-                self.manager._server_thread.wait()
+        loop = asyncio.get_event_loop()
+        loop.sock_connect = self.old_connect
+        loop.sock_accept = self.old_accept
+        loop.sock_recv = self.old_sock_recv
+        loop.sock_sendall = self.old_sock_sendall
 
 
 @pytest.fixture
@@ -209,11 +279,16 @@ class TestPygazebo(object):
         assert publications[0] == ('inittopic1', 'msgs.Fake')
 
     def test_advertise(self, manager):
+        loop = asyncio.get_event_loop()
+
         # Start listening for things in the server.
-        listen = eventlet.spawn(manager.server.read_packet)
+        listen = asyncio.Future()
+        manager.server.read_packet(lambda data: listen.set_result(data))
         publisher = manager.manager.advertise('mytopic', 'mymsgtype')
         assert publisher is not None
-        packet_data = listen.wait()
+
+        loop.run_until_complete(listen)
+        packet_data = listen.result()
 
         # We should have received an advertise for this topic.
         packet = packet_pb2.Packet.FromString(packet_data)
@@ -224,16 +299,20 @@ class TestPygazebo(object):
         assert advertise.msg_type == 'mymsgtype'
 
     def test_subscribe(self, manager):
+        loop = asyncio.get_event_loop()
+
         received_data = []
 
         def callback(data):
             received_data.append(data)
 
-        listen = eventlet.spawn(manager.server.read_packet)
+        listen = asyncio.Future()
+        manager.server.read_packet(lambda data: listen.set_result(data))
         subscriber = manager.manager.subscribe(
             'subscribetopic', 'othermsgtype', callback)
         assert subscriber is not None
-        packet_data = listen.wait()
+        loop.run_until_complete(listen)
+        packet_data = listen.result()
 
         # We should have received a subscribe for this topic.
         packet = packet_pb2.Packet.FromString(packet_data)
@@ -245,13 +324,18 @@ class TestPygazebo(object):
         assert subscribe.msg_type == 'othermsgtype'
 
     def test_send(self, manager):
-        eventlet.spawn(manager.server.read_packet)
+        loop = asyncio.get_event_loop()
+
+        read_future = asyncio.Future()
+        manager.server.read_packet(lambda data: read_future.set_result(data))
         publisher = manager.manager.advertise('mytopic2', 'msgtype')
 
         # Now pretend we are a remote host who wants to subscribe to
         # this topic.
         pipe = Pipe()
-        eventlet.spawn_n(manager.serve_handle, pipe.endpointa, None)
+        manager.serve_future.set_result((pipe.endpointa, None))
+
+        loop.run_until_complete(read_future)
 
         subscribe = subscribe_pb2.Subscribe()
         subscribe.topic = 'mytopic2'
@@ -259,24 +343,35 @@ class TestPygazebo(object):
         subscribe.host = 'localhost'
         subscribe.port = 54321
 
-        pipe.endpointb.write_packet('sub', subscribe)
+        write_future = asyncio.Future()
+        pipe.endpointb.write_packet('sub', subscribe,
+                                    lambda: write_future.set_result(None))
+        loop.run_until_complete(publisher.wait_for_listener())
 
+        read_data1 = asyncio.Future()
         # At this point, anything we "publish" should end up being
         # written to this pipe.
-        read_data1 = eventlet.spawn(pipe.endpointb.read_frame)
+        pipe.endpointb.read_frame(lambda data: read_data1.set_result(data))
 
         sample_message = gz_string_pb2.GzString()
         sample_message.data = 'testdata'
         publisher.publish(sample_message)
 
-        data_frame = read_data1.wait()
+        loop.run_until_complete(read_data1)
+        data_frame = read_data1.result()
         assert data_frame == sample_message.SerializeToString()
 
         # Test sending a very large message, it should require no
         # individual writes which are too large.
-        read_data2 = eventlet.spawn(pipe.endpointb.read_frame)
-        sample_message.data = ' ' * 100000
+        read_data2 = asyncio.Future()
+        pipe.endpointb.read_frame(lambda data: read_data2.set_result(data))
+        sample_message.data = ' ' * 20000
         publisher.publish(sample_message)
 
-        data_frame = read_data2.wait()
+        loop.run_until_complete(read_data2)
+        data_frame = read_data2.result()
         assert data_frame == sample_message.SerializeToString()
+
+import logging
+import sys
+logging.basicConfig(level=logging.WARN, stream=sys.stdout)
