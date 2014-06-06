@@ -64,13 +64,14 @@ class Publisher(object):
         self._listeners = []
         self._first_listener_ready = Event()
 
-    def publish(self, msg):
-        """Publish a new instance of this data.  Returns a Future.
+    def publish(self, msg, callback=None):
+        """Publish a new instance of this data.
 
         :param msg: the message to publish
         :type msg: :class:`google.protobuf.Message` instance
+        :param callback: callback to invoke when sending is complete
         """
-        return self._publish_impl(msg)
+        self._publish_impl(msg, callback)
 
     def wait_for_listener(self):
         """Return a Future which is complete when at least one listener is
@@ -104,7 +105,7 @@ class Publisher(object):
             if len(self.connections) == 0:
                 self.set_result(None)
 
-    def _publish_impl(self, message):
+    def _publish_impl(self, message, callback):
         result = Publisher.WriteFuture(self, self._listeners[:])
 
         # Try writing to each of our listeners.  If any give an error,
@@ -113,7 +114,8 @@ class Publisher(object):
             connection.write(
                 message, lambda: result.handle_done(connection))
 
-        return result
+        if callback is not None:
+            result.add_done_callback(callback)
 
     def _connect(self, connection):
         self._listeners.append(connection)
@@ -504,8 +506,9 @@ class Manager(object):
         logger.debug('Connection: initialized!')
         self._initialized = True
 
-        loop = asyncio.get_event_loop()
-        loop.call_soon(callback)
+        if callback is not None:
+            loop = asyncio.get_event_loop()
+            loop.call_soon(callback)
         self.start_normal_read()
 
     def start_normal_read(self):
