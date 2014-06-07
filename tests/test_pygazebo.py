@@ -184,6 +184,9 @@ class FakeSocket(object):
     def bind(self, *args):
         pass
 
+    def setblocking(self, value):
+        pass
+
     def getsockname(self):
         return ('127.0.0.1', 12345)
 
