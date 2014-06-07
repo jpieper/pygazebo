@@ -177,9 +177,12 @@ class Subscriber(object):
                                 lambda: self._connect3(connection))
 
     def _connect3(self, connection):
-        connection.read_raw(lambda data: self._handle_read(connection, data))
+        future = connection.read_raw()
+        future.add_done_callback(
+            lambda future: self._handle_read(connection, future))
 
-    def _handle_read(self, connection, data):
+    def _handle_read(self, connection, future):
+        data = future.result()
         if data is None:
             self._connections.remove(connection)
             return
@@ -258,29 +261,33 @@ class _Connection(object):
         conn, address = future.result()
         callback(conn, address)
 
-    def read_raw(self, callback):
+    def read_raw(self):
+        result = asyncio.Future()
+
         logger.debug('Connection.read_raw')
         loop = asyncio.get_event_loop()
         future = asyncio.async(loop.sock_recv(self.socket, 8))
         future.add_done_callback(
-            lambda future: self.handle_read_raw_header(future, callback))
+            lambda future: self.handle_read_raw_header(future, result))
+        return result
 
-    def handle_read_raw_header(self, future, callback):
+    def handle_read_raw_header(self, future, result):
         header = future.result()
         if len(header) < 8:
-            callback(None)
+            result.set_exception(ParseError('malformed header: ' + header))
             return
 
         try:
             size = int(header, 16)
         except ValueError:
-            raise ParseError('invalid header: ' + header)
+            result.set_exception(ParseError('invalid header: ' + header))
+            return
 
-        self.start_read_data('', size, callback)
+        self.start_read_data('', size, result)
 
-    def start_read_data(self, starting_data, total_size, callback):
+    def start_read_data(self, starting_data, total_size, result):
         if len(starting_data) == total_size:
-            callback(starting_data)
+            result.set_result(starting_data)
             return
 
         loop = asyncio.get_event_loop()
@@ -290,28 +297,39 @@ class _Connection(object):
                                self.BUF_SIZE)))
         future.add_done_callback(
             lambda future: self.handle_read_data(
-                future, starting_data, total_size, callback))
+                future, starting_data, total_size, result))
 
-    def handle_read_data(self, future, starting_data, total_size, callback):
+    def handle_read_data(self, future, starting_data, total_size, result):
         data = future.result()
         if len(data) == 0:
-            callback(None)
+            result.set_result(None)
             return
 
         data = starting_data + data
-        self.start_read_data(data, total_size, callback)
+        self.start_read_data(data, total_size, result)
 
-    def read(self, callback):
+    def read(self):
         logger.debug('Connection.read')
-        self.read_raw(lambda data: self.handle_read(data, callback))
+        result = asyncio.Future()
 
-    def handle_read(self, data, callback):
+        future = self.read_raw()
+        future.add_done_callback(
+            lambda future: self.handle_read(future, result))
+        return result
+
+    def handle_read(self, future, result):
+        try:
+            data = future.result()
+        except Exception as e:
+            result.set_exception(e)
+            return
+
         if data is None:
-            callback(None)
+            result.set_result(None)
             return
 
         packet = msg.packet_pb2.Packet.FromString(data)
-        callback(packet)
+        result.set_result(packet)
 
     def send_pieces(self, data, callback):
         if len(data) == 0:
@@ -486,20 +504,25 @@ class Manager(object):
         self._server.serve(self._handle_server_connection)
 
         # Read and process the required three initialization packets.
-        self._master.read(lambda data: self.handle_initdata(data, callback))
+        future = self._master.read()
+        future.add_done_callback(
+            lambda future: self.handle_initdata(future, callback))
 
-    def handle_initdata(self, initData, callback):
+    def handle_initdata(self, future, callback):
         logger.debug('Manager.handle_initdata')
+        initData = future.result()
         if initData.type != 'version_init':
             raise ParseError('unexpected initialization packet: ' +
                              initData.type)
         self._handle_version_init(
             msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
 
-        self._master.read(lambda data: self.handle_namespacesdata(
-            data, callback))
+        future = self._master.read()
+        future.add_done_callback(
+            lambda future: self.handle_namespacesdata(future, callback))
 
-    def handle_namespacesdata(self, namespacesData, callback):
+    def handle_namespacesdata(self, future, callback):
+        namespacesData = future.result()
 
         # NOTE: This type string is mis-spelled in the official client
         # and server as of 2.2.1.  Presumably they'll just leave it be
@@ -511,10 +534,12 @@ class Manager(object):
             msg.gz_string_v_pb2.GzString_V.FromString(
                 namespacesData.serialized_data))
 
-        self._master.read(lambda data: self.handle_publishersdata(
-            data, callback))
+        future = self._master.read()
+        future.add_done_callback(
+            lambda future: self.handle_publishersdata(future, callback))
 
-    def handle_publishersdata(self, publishersData, callback):
+    def handle_publishersdata(self, future, callback):
+        publishersData = future.result()
         if publishersData.type != 'publishers_init':
             raise ParseError('unexpected publishers init packet: ' +
                              publishersData.type)
@@ -532,9 +557,11 @@ class Manager(object):
 
     def start_normal_read(self):
         # Enter the normal message dispatch loop.
-        self._master.read(self.handle_normal_read)
+        future = self._master.read()
+        future.add_done_callback(self.handle_normal_read)
 
-    def handle_normal_read(self, data):
+    def handle_normal_read(self, future):
+        data = future.result()
         if data is None:
             return
 
@@ -549,10 +576,12 @@ class Manager(object):
         self._read_server_data(this_connection)
 
     def _read_server_data(self, connection):
-        connection.read(
-            lambda data: self._handle_server_data(data, connection))
+        future = connection.read()
+        future.add_done_callback(
+            lambda future: self._handle_server_data(future, connection))
 
-    def _handle_server_data(self, message, connection):
+    def _handle_server_data(self, future, connection):
+        message = future.result()
         if message is None:
             return
         if message.type == 'sub':
