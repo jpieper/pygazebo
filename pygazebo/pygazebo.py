@@ -140,6 +140,7 @@ class Subscriber(object):
 
         self._local_host = local_host
         self._local_port = local_port
+        self._connection_future = asyncio.Future()
         self._connections = []
 
     def remove(self):
@@ -149,6 +150,9 @@ class Subscriber(object):
         longer be invoked.
         """
         raise NotImplementedError()
+
+    def wait_for_connection(self):
+        return self._connection_future
 
     def _start_connect(self, pub):
         # Do the actual work in a new callback.
@@ -183,6 +187,8 @@ class Subscriber(object):
     def _connect3(self, future, connection):
         future.result()  # check for error
 
+        if not self._connection_future.done():
+            self._connection_future.set_result(None)
         future = connection.read_raw()
         future.add_done_callback(
             lambda future: self._handle_read(future, connection))
@@ -191,6 +197,8 @@ class Subscriber(object):
         data = future.result()
         if data is None:
             self._connections.remove(connection)
+            if len(self._connections) == 0:
+                self._connection_future = asyncio.Future()
             return
 
         self.callback(data)

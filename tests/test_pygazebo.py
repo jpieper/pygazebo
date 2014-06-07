@@ -202,9 +202,11 @@ class FakeSocket(object):
 
 class ManagerFixture(object):
     def __init__(self):
+        print "ManagerFixture.__init__"
         self.manager = None
 
         self.server = MockServer()
+        self.next_connect_socket = self.server.client_socket()
         self.fake_socket = FakeSocket()
 
         self.old_socket = socket.socket
@@ -233,7 +235,9 @@ class ManagerFixture(object):
         self.manager = manager_future.result()
 
     def connect(self, socket, addr):
-        socket.pipe = self.server.client_socket()
+        print "connect, returning:", self.next_connect_socket
+        socket.pipe = self.next_connect_socket
+        self.next_connect_socket = None
 
         result = asyncio.Future()
         result.set_result(None)
@@ -262,6 +266,11 @@ class ManagerFixture(object):
         loop.sock_accept = self.old_accept
         loop.sock_recv = self.old_sock_recv
         loop.sock_sendall = self.old_sock_sendall
+
+        # Ensure that we don't keep any events around from one test to
+        # the next.
+        loop.close()
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 @pytest.fixture
@@ -305,9 +314,12 @@ class TestPygazebo(object):
         loop = asyncio.get_event_loop()
 
         received_data = []
+        first_data_future = asyncio.Future()
 
         def callback(data):
             received_data.append(data)
+            if not first_data_future.done():
+                first_data_future.set_result(None)
 
         listen = asyncio.Future()
         manager.server.read_packet(lambda data: listen.set_result(data))
@@ -325,6 +337,39 @@ class TestPygazebo(object):
             packet.serialized_data)
         assert subscribe.topic == 'subscribetopic'
         assert subscribe.msg_type == 'othermsgtype'
+
+        other_pipe = Pipe()
+        manager.next_connect_socket = other_pipe.endpointb
+
+        other_future = asyncio.Future()
+        other_pipe.endpointa.read_frame(
+            lambda data: other_future.set_result(data))
+
+        # Pretend like we now have a remote peer who wants to publish
+        # on this topic.
+        publish = publish_pb2.Publish()
+        publish.msg_type = 'othermsgtype'
+        publish.topic = 'subscribetopic'
+        publish.host = 'localhost'
+        publish.port = 98765
+
+        publish_future = asyncio.Future()
+
+        manager.server.write_packet(
+            'publisher_subscribe',
+            publish,
+            lambda: publish_future.set_result(None))
+
+        loop.run_until_complete(subscriber.wait_for_connection())
+
+        assert len(received_data) == 0
+
+        # Write a frame to the pipe and see that it shows up in
+        # received data.
+        other_pipe.endpointa.write_frame('testdata', lambda: None)
+        loop.run_until_complete(first_data_future)
+        assert len(received_data) == 1
+        assert received_data[0] == 'testdata'
 
     def test_send(self, manager):
         loop = asyncio.get_event_loop()
@@ -377,4 +422,4 @@ class TestPygazebo(object):
 
 import logging
 import sys
-logging.basicConfig(level=logging.WARN, stream=sys.stdout)
+logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
