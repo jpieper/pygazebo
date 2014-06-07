@@ -95,12 +95,14 @@ class Publisher(object):
             self.publisher = publisher
             self.connections = dict((x, True) for x in connections)
 
-        def handle_done(self, connection):
+        def handle_done(self, future, connection):
             del self.connections[connection]
 
-            # if (future.exception() is not None and
-            #     connection in self.publisher._listeners):
-            #     self.publisher._listeners.remove(connection)
+            try:
+                future.result()
+            except:
+                if connection in self.publisher._listeners:
+                    self.publisher._listeners.remove(connection)
 
             if len(self.connections) == 0:
                 self.set_result(None)
@@ -111,8 +113,9 @@ class Publisher(object):
         # Try writing to each of our listeners.  If any give an error,
         # disconnect them.
         for connection in self._listeners:
-            connection.write(
-                message, lambda: result.handle_done(connection))
+            future = connection.write(message)
+            future.add_done_callback(
+                lambda future: result.handle_done(future, connection))
 
         return result
 
@@ -173,15 +176,18 @@ class Subscriber(object):
         to_send.msg_type = pub.msg_type
         to_send.latching = False
 
-        connection.write_packet('sub', to_send,
-                                lambda: self._connect3(connection))
+        future = connection.write_packet('sub', to_send)
+        future.add_done_callback(
+            lambda future: self._connect3(future, connection))
 
-    def _connect3(self, connection):
+    def _connect3(self, future, connection):
+        future.result()  # check for error
+
         future = connection.read_raw()
         future.add_done_callback(
-            lambda future: self._handle_read(connection, future))
+            lambda future: self._handle_read(future, connection))
 
-    def _handle_read(self, connection, future):
+    def _handle_read(self, future, connection):
         data = future.result()
         if data is None:
             self._connections.remove(connection)
@@ -343,40 +349,66 @@ class _Connection(object):
             result.set_exception(e)
             return
 
-    def send_pieces(self, data, callback):
-        if len(data) == 0:
-            callback()
-            return
+    def send_pieces(self, data, result=None):
+        if result is None:
+            result = asyncio.Future()
 
-        to_send = min(len(data), self.BUF_SIZE)
-        this_send = data[:to_send]
-        next_send = data[to_send:]
+        try:
+            if len(data) == 0:
+                result.set_result(None)
+                return
 
-        loop = asyncio.get_event_loop()
-        future = asyncio.async(loop.sock_sendall(self.socket, this_send))
-        future.add_done_callback(
-            lambda future: self.send_pieces(next_send, callback))
+            to_send = min(len(data), self.BUF_SIZE)
+            this_send = data[:to_send]
+            next_send = data[to_send:]
 
-    def write(self, message, callback):
+            loop = asyncio.get_event_loop()
+            future = asyncio.async(loop.sock_sendall(self.socket, this_send))
+            future.add_done_callback(
+                lambda future: self.send_pieces(next_send, result))
+        except Exception as e:
+            result.set_exception(e)
+
+        return result
+
+    def write(self, message):
+        result = asyncio.Future()
+
         future = self._socket_ready.wait()
         future.add_done_callback(
-            lambda future: self.ready_write(future, message, callback))
+            lambda future: self.ready_write(future, message, result))
 
-    def ready_write(self, future, message, callback):
-        future.result()  # check for error
-        data = message.SerializeToString()
+        return result
 
-        header = '%08X' % len(data)
-        self.send_pieces(header + data, callback)
+    def ready_write(self, future, message, result):
+        try:
+            future.result()  # check for error
+            data = message.SerializeToString()
 
-    def write_packet(self, name, message, callback):
+            header = '%08X' % len(data)
+            future = self.send_pieces(header + data)
+            future.add_done_callback(
+                lambda future: self.finish_write(future, result))
+        except Exception as e:
+            result.set_exception(e)
+            return
+
+    def finish_write(self, future, result):
+        try:
+            future.result()
+            result.set_result(None)
+        except Exception as e:
+            result.set_exception(e)
+            return
+
+    def write_packet(self, name, message):
         packet = msg.packet_pb2.Packet()
         cur_time = time.time()
         packet.stamp.sec = int(cur_time)
         packet.stamp.nsec = int(math.fmod(cur_time, 1) * 1e9)
         packet.type = name
         packet.serialized_data = message.SerializeToString()
-        self.write(packet, callback)
+        return self.write(packet)
 
     @property
     def local_host(self):
@@ -435,7 +467,7 @@ class Manager(object):
         to_send.host = self._server.local_host
         to_send.port = self._server.local_port
 
-        self._master.write_packet('advertise', to_send, lambda: None)
+        self._master.write_packet('advertise', to_send)
         result = Publisher()
         result.topic = topic_name
         result.msg_type = msg_type
@@ -467,7 +499,7 @@ class Manager(object):
         to_send.port = self._server.local_port
         to_send.latching = False
 
-        self._master.write_packet('subscribe', to_send, lambda: None)
+        self._master.write_packet('subscribe', to_send)
 
         result = Subscriber(local_host=to_send.host,
                             local_port=to_send.port)
