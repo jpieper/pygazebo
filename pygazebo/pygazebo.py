@@ -66,14 +66,14 @@ class Publisher(object):
         self._listeners = []
         self._first_listener_ready = Event()
 
-    def publish(self, msg, callback=None):
+    def publish(self, msg):
         """Publish a new instance of this data.
 
         :param msg: the message to publish
         :type msg: :class:`google.protobuf.Message` instance
-        :param callback: callback to invoke when sending is complete
+        :returns: a future which completes when the data has been written
         """
-        self._publish_impl(msg, callback)
+        return self._publish_impl(msg)
 
     def wait_for_listener(self):
         """Return a Future which is complete when at least one listener is
@@ -105,7 +105,7 @@ class Publisher(object):
             if len(self.connections) == 0:
                 self.set_result(None)
 
-    def _publish_impl(self, message, callback):
+    def _publish_impl(self, message):
         result = Publisher.WriteFuture(self, self._listeners[:])
 
         # Try writing to each of our listeners.  If any give an error,
@@ -114,8 +114,7 @@ class Publisher(object):
             connection.write(
                 message, lambda: result.handle_done(connection))
 
-        if callback is not None:
-            result.add_done_callback(callback)
+        return result
 
     def _connect(self, connection):
         self._listeners.append(connection)
