@@ -9,8 +9,9 @@ Tests for `pygazebo` module.
 """
 
 # TODO:
-#  * Test that connections close when write errors occur.
+#  * Test that connections close when write errors occur
 #  * Do something that requires a subscriber to make a connection
+#  * Error cases
 
 try:
     import asyncio

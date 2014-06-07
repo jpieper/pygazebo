@@ -212,6 +212,9 @@ class _Connection(object):
         self.address = address
         loop = asyncio.get_event_loop()
         self.socket = socket.socket()
+        self.socket.setblocking(False)
+        # TODO jpieper: Either assert that this is numeric, or have a
+        # separate DNS resolution stage.
         future = asyncio.async(loop.sock_connect(self.socket, address))
 
         def callback_impl(future):
@@ -228,6 +231,7 @@ class _Connection(object):
         self.socket.bind(('', 0))
         self._local_host, self._local_port = self.socket.getsockname()
         self.socket.listen(5)
+        self.socket.setblocking(False)
         self._local_ready.set()
 
         self.start_accept(callback)
@@ -369,7 +373,7 @@ class Manager(object):
     :type address: a tuple of ('host', port)
     :param callback: callback to be invoked once the connection is complete
     """
-    def __init__(self, address=('localhost', 11345), callback=None):
+    def __init__(self, address=('127.0.0.1', 11345), callback=None):
         self._address = address
         self._master = _Connection()
         self._server = _Connection()
@@ -465,12 +469,14 @@ class Manager(object):
             lambda ignored: self.handle_connect(ignored, callback))
 
     def handle_connect(self, ignored, callback):
+        logger.debug('Manager.handle_connect')
         self._server.serve(self._handle_server_connection)
 
         # Read and process the required three initialization packets.
         self._master.read(lambda data: self.handle_initdata(data, callback))
 
     def handle_initdata(self, initData, callback):
+        logger.debug('Manager.handle_initdata')
         if initData.type != 'version_init':
             raise ParseError('unexpected initialization packet: ' +
                              initData.type)
@@ -562,7 +568,7 @@ class Manager(object):
         publisher._connect(this_connection)
 
     def _process_message(self, packet):
-        logger.debug('Manager.process_message', packet)
+        logger.debug('Manager.process_message' + packet)
         if packet.type in Manager._MSG_HANDLERS:
             handler, packet_type = Manager._MSG_HANDLERS[packet.type]
             handler(self, packet_type.FromString(packet.serialized_data))
@@ -641,7 +647,3 @@ class Manager(object):
         'unsubscribe': (_handle_unsubscribe, msg.subscribe_pb2.Subscribe),
         'unadvertise': (_handle_unadvertise, msg.publish_pb2.Publish),
         }
-
-import sys
-logger.setLevel(logging.DEBUG)
-logger.addHandler(logging.StreamHandler(sys.stdout))
