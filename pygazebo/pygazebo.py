@@ -155,10 +155,13 @@ class Subscriber(object):
         connection = _Connection()
 
         # Connect to the remote provider.
-        connection.connect((pub.host, pub.port),
-                           lambda: self._connect2(connection, pub))
+        future = connection.connect((pub.host, pub.port))
+        future.add_done_callback(
+            lambda future: self._connect2(future, connection, pub))
 
-    def _connect2(self, connection, pub):
+    def _connect2(self, future, connection, pub):
+        future.result()  # Check for error
+
         self._connections.append(connection)
 
         # Send the initial message, which is encapsulated inside of a
@@ -206,21 +209,28 @@ class _Connection(object):
         self._socket_ready = Event()
         self._local_ready = Event()
 
-    def connect(self, address, callback):
+    def connect(self, address):
         logger.debug('Connection.connect')
         self.address = address
         loop = asyncio.get_event_loop()
         self.socket = socket.socket()
         self.socket.setblocking(False)
+
         # TODO jpieper: Either assert that this is numeric, or have a
         # separate DNS resolution stage.
         future = asyncio.async(loop.sock_connect(self.socket, address))
 
         def callback_impl(future):
-            self._socket_ready.set()
-            callback(future.result())
+            try:
+                future.result()  # check for exception
+                self._socket_ready.set()
+            except:
+                # Ignore all exceptions here, the user can deal with
+                # them if they want to since they have the future.
+                pass
 
         future.add_done_callback(callback_impl)
+        return future
 
     def serve(self, callback):
         """Start listening for new connections.  Invoke callback every
@@ -323,7 +333,7 @@ class _Connection(object):
             lambda future: self.ready_write(future, message, callback))
 
     def ready_write(self, future, message, callback):
-        future.result() # check for error
+        future.result()  # check for error
         data = message.SerializeToString()
 
         header = '%08X' % len(data)
@@ -466,11 +476,12 @@ class Manager(object):
     def _run(self, callback):
         """Starts the connection and processes events."""
         logger.debug('Manager.run')
-        self._master.connect(
-            self._address,
-            lambda ignored: self.handle_connect(ignored, callback))
+        future = self._master.connect(self._address)
+        future.add_done_callback(
+            lambda future: self.handle_connect(future, callback))
 
-    def handle_connect(self, ignored, callback):
+    def handle_connect(self, future, callback):
+        future.result()
         logger.debug('Manager.handle_connect')
         self._server.serve(self._handle_server_connection)
 
