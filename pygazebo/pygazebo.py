@@ -272,41 +272,53 @@ class _Connection(object):
         return result
 
     def handle_read_raw_header(self, future, result):
-        header = future.result()
-        if len(header) < 8:
-            result.set_exception(ParseError('malformed header: ' + header))
-            return
-
         try:
-            size = int(header, 16)
-        except ValueError:
-            result.set_exception(ParseError('invalid header: ' + header))
-            return
+            header = future.result()
+            if len(header) < 8:
+                result.set_exception(ParseError('malformed header: ' + header))
+                return
 
-        self.start_read_data('', size, result)
+            try:
+                size = int(header, 16)
+            except ValueError:
+                result.set_exception(ParseError('invalid header: ' + header))
+                return
+
+            self.start_read_data('', size, result)
+        except Exception as e:
+            result.set_exception(e)
+            return
 
     def start_read_data(self, starting_data, total_size, result):
-        if len(starting_data) == total_size:
-            result.set_result(starting_data)
-            return
+        try:
+            if len(starting_data) == total_size:
+                result.set_result(starting_data)
+                return
 
-        loop = asyncio.get_event_loop()
-        future = asyncio.async(
-            loop.sock_recv(self.socket,
-                           min(total_size - len(starting_data),
-                               self.BUF_SIZE)))
-        future.add_done_callback(
-            lambda future: self.handle_read_data(
-                future, starting_data, total_size, result))
+            loop = asyncio.get_event_loop()
+            future = asyncio.async(
+                loop.sock_recv(self.socket,
+                               min(total_size - len(starting_data),
+                                   self.BUF_SIZE)))
+            future.add_done_callback(
+                lambda future: self.handle_read_data(
+                    future, starting_data, total_size, result))
+        except Exception as e:
+            result.set_exception(e)
+            return
 
     def handle_read_data(self, future, starting_data, total_size, result):
-        data = future.result()
-        if len(data) == 0:
-            result.set_result(None)
-            return
+        try:
+            data = future.result()
+            if len(data) == 0:
+                result.set_result(None)
+                return
 
-        data = starting_data + data
-        self.start_read_data(data, total_size, result)
+            data = starting_data + data
+            self.start_read_data(data, total_size, result)
+        except Exception as e:
+            result.set_exception(e)
+            return
 
     def read(self):
         logger.debug('Connection.read')
@@ -320,16 +332,16 @@ class _Connection(object):
     def handle_read(self, future, result):
         try:
             data = future.result()
+
+            if data is None:
+                result.set_result(None)
+                return
+
+            packet = msg.packet_pb2.Packet.FromString(data)
+            result.set_result(packet)
         except Exception as e:
             result.set_exception(e)
             return
-
-        if data is None:
-            result.set_result(None)
-            return
-
-        packet = msg.packet_pb2.Packet.FromString(data)
-        result.set_result(packet)
 
     def send_pieces(self, data, callback):
         if len(data) == 0:
@@ -393,17 +405,7 @@ class _PublisherRecord(object):
 
 
 class Manager(object):
-    """Create a connection to the Gazebo server.
-
-    The Manager instance creates a connection to the Gazebo server,
-    then allows the client to either advertise topics for publication,
-    or to listen to other publishers.
-
-    :param address: destination TCP server
-    :type address: a tuple of ('host', port)
-    :param callback: callback to be invoked once the connection is complete
-    """
-    def __init__(self, address=('127.0.0.1', 11345), callback=None):
+    def __init__(self, address):
         self._address = address
         self._master = _Connection()
         self._server = _Connection()
@@ -412,8 +414,8 @@ class Manager(object):
         self._publishers = {}
         self._subscribers = {}
 
-        loop = asyncio.get_event_loop()
-        loop.call_soon(self._run, callback)
+    def start(self):
+        return self._run()
 
     def advertise(self, topic_name, msg_type):
         """Inform the Gazebo server of a topic we will publish.
@@ -491,69 +493,88 @@ class Manager(object):
         """
         return self._namespaces
 
-    def _run(self, callback):
+    def _run(self):
         """Starts the connection and processes events."""
         logger.debug('Manager.run')
+        result = asyncio.Future()
+
         future = self._master.connect(self._address)
         future.add_done_callback(
-            lambda future: self.handle_connect(future, callback))
+            lambda future: self.handle_connect(future, result))
+        return result
 
-    def handle_connect(self, future, callback):
-        future.result()
-        logger.debug('Manager.handle_connect')
-        self._server.serve(self._handle_server_connection)
+    def handle_connect(self, future, result):
+        try:
+            future.result()
+            logger.debug('Manager.handle_connect')
+            self._server.serve(self._handle_server_connection)
 
-        # Read and process the required three initialization packets.
-        future = self._master.read()
-        future.add_done_callback(
-            lambda future: self.handle_initdata(future, callback))
+            # Read and process the required three initialization packets.
+            future = self._master.read()
+            future.add_done_callback(
+                lambda future: self.handle_initdata(future, result))
+        except Exception as e:
+            result.set_exception(e)
+            return
 
-    def handle_initdata(self, future, callback):
-        logger.debug('Manager.handle_initdata')
-        initData = future.result()
-        if initData.type != 'version_init':
-            raise ParseError('unexpected initialization packet: ' +
-                             initData.type)
-        self._handle_version_init(
-            msg.gz_string_pb2.GzString.FromString(initData.serialized_data))
+    def handle_initdata(self, future, result):
+        try:
+            logger.debug('Manager.handle_initdata')
+            initData = future.result()
+            if initData.type != 'version_init':
+                raise ParseError('unexpected initialization packet: ' +
+                                 initData.type)
+            self._handle_version_init(
+                msg.gz_string_pb2.GzString.FromString(
+                    initData.serialized_data))
 
-        future = self._master.read()
-        future.add_done_callback(
-            lambda future: self.handle_namespacesdata(future, callback))
+            future = self._master.read()
+            future.add_done_callback(
+                lambda future: self.handle_namespacesdata(future, result))
+        except Exception as e:
+            result.set_exception(e)
+            return
 
-    def handle_namespacesdata(self, future, callback):
-        namespacesData = future.result()
+    def handle_namespacesdata(self, future, result):
+        try:
+            namespacesData = future.result()
 
-        # NOTE: This type string is mis-spelled in the official client
-        # and server as of 2.2.1.  Presumably they'll just leave it be
-        # to preserve network compatibility.
-        if namespacesData.type != 'topic_namepaces_init':
-            raise ParseError('unexpected namespaces init packet: ' +
-                             namespacesData.type)
-        self._handle_topic_namespaces_init(
-            msg.gz_string_v_pb2.GzString_V.FromString(
-                namespacesData.serialized_data))
+            # NOTE: This type string is mis-spelled in the official client
+            # and server as of 2.2.1.  Presumably they'll just leave it be
+            # to preserve network compatibility.
+            if namespacesData.type != 'topic_namepaces_init':
+                raise ParseError('unexpected namespaces init packet: ' +
+                                 namespacesData.type)
+            self._handle_topic_namespaces_init(
+                msg.gz_string_v_pb2.GzString_V.FromString(
+                    namespacesData.serialized_data))
 
-        future = self._master.read()
-        future.add_done_callback(
-            lambda future: self.handle_publishersdata(future, callback))
+            future = self._master.read()
+            future.add_done_callback(
+                lambda future: self.handle_publishersdata(future, result))
+        except Exception as e:
+            result.set_exception(e)
+            return
 
-    def handle_publishersdata(self, future, callback):
-        publishersData = future.result()
-        if publishersData.type != 'publishers_init':
-            raise ParseError('unexpected publishers init packet: ' +
-                             publishersData.type)
-        self._handle_publishers_init(
-            msg.publishers_pb2.Publishers.FromString(
-                publishersData.serialized_data))
+    def handle_publishersdata(self, future, result):
+        try:
+            publishersData = future.result()
+            if publishersData.type != 'publishers_init':
+                raise ParseError('unexpected publishers init packet: ' +
+                                 publishersData.type)
+            self._handle_publishers_init(
+                msg.publishers_pb2.Publishers.FromString(
+                    publishersData.serialized_data))
 
-        logger.debug('Connection: initialized!')
-        self._initialized = True
+            logger.debug('Connection: initialized!')
+            self._initialized = True
 
-        if callback is not None:
-            loop = asyncio.get_event_loop()
-            loop.call_soon(callback)
-        self.start_normal_read()
+            self.start_normal_read()
+
+            result.set_result(self)
+        except Exception as e:
+            result.set_exception(e)
+            return
 
     def start_normal_read(self):
         # Enter the normal message dispatch loop.
@@ -610,7 +631,7 @@ class Manager(object):
         publisher._connect(this_connection)
 
     def _process_message(self, packet):
-        logger.debug('Manager.process_message' + packet)
+        logger.debug('Manager.process_message: ' + str(packet))
         if packet.type in Manager._MSG_HANDLERS:
             handler, packet_type = Manager._MSG_HANDLERS[packet.type]
             handler(self, packet_type.FromString(packet.serialized_data))
@@ -690,3 +711,18 @@ class Manager(object):
         'unsubscribe': (_handle_unsubscribe, msg.subscribe_pb2.Subscribe),
         'unadvertise': (_handle_unadvertise, msg.publish_pb2.Publish),
         }
+
+
+def connect(address=('127.0.0.1', 11345)):
+    """Create a connection to the Gazebo server.
+
+    The Manager instance creates a connection to the Gazebo server,
+    then allows the client to either advertise topics for publication,
+    or to listen to other publishers.
+
+    :param address: destination TCP server
+    :type address: a tuple of ('host', port)
+    :returns: a Future indicating when the connection is ready
+    """
+    manager = Manager(address)
+    return manager.start()

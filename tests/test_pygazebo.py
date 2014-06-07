@@ -224,14 +224,13 @@ class ManagerFixture(object):
         self.old_sock_sendall = loop.sock_sendall
         loop.sock_sendall = self.sendall
 
-        manager_future = asyncio.Future()
-        self.manager = pygazebo.Manager(
-            ('localhost', 12345),
-            lambda: manager_future.set_result(None))
+        manager_future = pygazebo.connect(('localhost', 12345))
+
         self.init_future = asyncio.Future()
         self.server.init_sequence(lambda: self.init_future.set_result(None))
 
         asyncio.get_event_loop().run_until_complete(manager_future)
+        self.manager = manager_future.result()
 
     def connect(self, socket, addr):
         socket.pipe = self.server.client_socket()
