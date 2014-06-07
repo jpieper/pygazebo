@@ -29,7 +29,7 @@ class Event(object):
     """This class provides nearly identical functionality to
     asyncio.Event, but does not require coroutines."""
     def __init__(self):
-        self.callbacks = []
+        self.futures = []
         self.clear()
 
     def clear(self):
@@ -38,17 +38,19 @@ class Event(object):
     def is_set(self):
         return self._set
 
-    def wait(self, callback):
+    def wait(self):
+        result = asyncio.Future()
         if self._set:
-            asyncio.get_event_loop().call_soon(callback)
+            result.set_result(None)
         else:
-            self.callbacks.append(callback)
+            self.futures.append(result)
+        return result
 
     def set(self):
         self._set = True
-        for callback in self.callbacks:
-            asyncio.get_event_loop().call_soon(callback)
-        self.callbacks = []
+        for future in self.futures:
+            future.set_result(None)
+        self.futures = []
 
 
 class Publisher(object):
@@ -76,9 +78,7 @@ class Publisher(object):
     def wait_for_listener(self):
         """Return a Future which is complete when at least one listener is
         present."""
-        result = asyncio.Future()
-        self._first_listener_ready.wait(lambda: result.set_result(None))
-        return result
+        return self._first_listener_ready.wait()
 
     def remove(self):
         """Stop advertising this topic.
@@ -319,9 +319,12 @@ class _Connection(object):
             lambda future: self.send_pieces(next_send, callback))
 
     def write(self, message, callback):
-        self._socket_ready.wait(lambda: self.ready_write(message, callback))
+        future = self._socket_ready.wait()
+        future.add_done_callback(
+            lambda future: self.ready_write(future, message, callback))
 
-    def ready_write(self, message, callback):
+    def ready_write(self, future, message, callback):
+        future.result() # check for error
         data = message.SerializeToString()
 
         header = '%08X' % len(data)
