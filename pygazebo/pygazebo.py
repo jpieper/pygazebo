@@ -548,14 +548,14 @@ class Manager(object):
                 msg.subscribe_pb2.Subscribe.FromString(
                     message.serialized_data))
         else:
-            logger.warn('Manager.handle_server_connection unknown msg:',
-                        msg.type)
+            logger.warn('Manager.handle_server_connection unknown msg:' +
+                        str(msg.type))
 
         self._read_server_data(connection)
 
     def _handle_server_sub(self, this_connection, msg):
         if not msg.topic in self._publishers:
-            logger.warn('Manager.handle_server_sub unknown topic:', msg.topic)
+            logger.warn('Manager.handle_server_sub unknown topic:' + msg.topic)
             return
 
         publisher = self._publishers[msg.topic]
@@ -600,19 +600,19 @@ class Manager(object):
         self._publisher_records.add(_PublisherRecord(msg))
 
     def _handle_publisher_del(self, msg):
-        logger.debug('Manager.handle_publisher_del', msg.topic)
+        logger.debug('Manager.handle_publisher_del:' + msg.topic)
         try:
             self._publisher_records.remove(_PublisherRecord(msg))
         except KeyError:
             logger.debug('got publisher_del for unknown: ' + msg.topic)
 
     def _handle_namespace_add(self, msg):
-        logger.debug('Manager.handle_namespace_add', msg.data)
+        logger.debug('Manager.handle_namespace_add:' + msg.data)
         self._namespaces.append(msg.data)
 
     def _handle_publisher_subscribe(self, msg):
-        logger.debug('Manager.handle_publisher_subscribe', msg.topic)
-        logger.debug(' our info: ',
+        logger.debug('Manager.handle_publisher_subscribe:' + msg.topic)
+        logger.debug(' our info: %s, %d',
                      self._server.local_host, self._server.local_port)
         if not msg.topic in self._subscribers:
             logger.debug('no subscribers!')
@@ -625,7 +625,8 @@ class Manager(object):
             logger.debug('got publisher_subscribe for ourselves')
             return
 
-        logger.debug('creating subscriber for:', msg.topic, msg.host, msg.port)
+        logger.debug('creating subscriber for: %s %s %d',
+                     msg.topic, msg.host, msg.port)
 
         subscriber = self._subscribers[msg.topic]
         subscriber._start_connect(msg)
