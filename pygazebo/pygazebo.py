@@ -94,6 +94,8 @@ class Publisher(object):
 
             self.publisher = publisher
             self.connections = dict((x, True) for x in connections)
+            if len(self.connections) == 0:
+                self.set_result(None)
 
         def handle_done(self, future, connection):
             del self.connections[connection]
@@ -289,14 +291,12 @@ class _Connection(object):
         try:
             header = future.result()
             if len(header) < 8:
-                result.set_exception(ParseError('malformed header: ' + header))
-                return
+                raise ParseError('malformed header: ' + header)
 
             try:
                 size = int(header, 16)
             except ValueError:
-                result.set_exception(ParseError('invalid header: ' + header))
-                return
+                raise ParseError('invalid header: ' + header)
 
             self.start_read_data('', size, result)
         except Exception as e:
@@ -475,11 +475,15 @@ class Manager(object):
         to_send.host = self._server.local_host
         to_send.port = self._server.local_port
 
-        self._master.write_packet('advertise', to_send)
-        result = Publisher()
-        result.topic = topic_name
-        result.msg_type = msg_type
-        self._publishers[topic_name] = result
+        write_future = self._master.write_packet('advertise', to_send)
+        publisher = Publisher()
+        publisher.topic = topic_name
+        publisher.msg_type = msg_type
+        self._publishers[topic_name] = publisher
+
+        result = asyncio.Future()
+        write_future.add_done_callback(
+            lambda future: result.set_result(publisher))
 
         return result
 

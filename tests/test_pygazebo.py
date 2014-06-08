@@ -12,6 +12,7 @@ Tests for `pygazebo` module.
 #  * Test that connections close when write errors occur
 #  * Do something that requires a subscriber to make a connection
 #  * Error cases
+#  * If no one is listening, that the publish future signals completion
 
 try:
     import asyncio
@@ -296,7 +297,8 @@ class TestPygazebo(object):
         # Start listening for things in the server.
         listen = asyncio.Future()
         manager.server.read_packet(lambda data: listen.set_result(data))
-        publisher = manager.manager.advertise('mytopic', 'mymsgtype')
+        publisher_future = manager.manager.advertise('mytopic', 'mymsgtype')
+        publisher = loop.run_until_complete(publisher_future)
         assert publisher is not None
 
         loop.run_until_complete(listen)
@@ -376,7 +378,8 @@ class TestPygazebo(object):
 
         read_future = asyncio.Future()
         manager.server.read_packet(lambda data: read_future.set_result(data))
-        publisher = manager.manager.advertise('mytopic2', 'msgtype')
+        publisher_future = manager.manager.advertise('mytopic2', 'msgtype')
+        publisher = loop.run_until_complete(publisher_future)
 
         # Now pretend we are a remote host who wants to subscribe to
         # this topic.
