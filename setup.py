@@ -40,7 +40,7 @@ setup(
     ],
     package_dir={'pygazebo': 'pygazebo'},
     include_package_data=True,
-    install_requires=['eventlet', 'protobuf'],
+    install_requires=['protobuf'],
     license="Apache License 2.0",
     zip_safe=False,
     keywords='pygazebo',
