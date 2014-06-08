@@ -90,7 +90,7 @@ class Publisher(object):
 
     class WriteFuture(asyncio.Future):
         def __init__(self, publisher, connections):
-            super(Publisher.WriteFuture, self).__init__(self)
+            super(Publisher.WriteFuture, self).__init__()
 
             self.publisher = publisher
             self.connections = dict((x, True) for x in connections)
@@ -102,7 +102,8 @@ class Publisher(object):
 
             try:
                 future.result()
-            except:
+            except Exception as e:
+                logger.debug('write error, closing connection:', str(e))
                 if connection in self.publisher._listeners:
                     self.publisher._listeners.remove(connection)
 
@@ -117,7 +118,8 @@ class Publisher(object):
         for connection in self._listeners:
             future = connection.write(message)
             future.add_done_callback(
-                lambda future: result.handle_done(future, connection))
+                lambda future, connection=connection: result.handle_done(
+                    future, connection))
 
         return result
 

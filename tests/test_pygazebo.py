@@ -406,11 +406,13 @@ class TestPygazebo(object):
 
         sample_message = gz_string_pb2.GzString()
         sample_message.data = 'testdata'
-        publisher.publish(sample_message)
+        publish_future = publisher.publish(sample_message)
 
         loop.run_until_complete(read_data1)
         data_frame = read_data1.result()
         assert data_frame == sample_message.SerializeToString()
+
+        assert loop.run_until_complete(publish_future) is None
 
         # Test sending a very large message, it should require no
         # individual writes which are too large.
