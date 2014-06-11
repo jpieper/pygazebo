@@ -44,19 +44,18 @@ local machine on the default port.
   
   @trollius.coroutine
   def publish_loop():
-      manager_done = trollius.Future()
-      manager = pygazebo.Manager(callback=lambda: manager_done.set_result(None))
-      yield From(manager_done)
+      manager = yield From(pygazebo.connect())
       
-      publisher = manager.advertise('/gazebo/default/model/joint_cmd',
-                                    'gazebo.msgs.JointCmd')
+      publisher = yield From(
+          manager.advertise('/gazebo/default/model/joint_cmd',
+                            'gazebo.msgs.JointCmd'))
   
       message = pygazebo.msg.joint_cmd_pb2.JointCmd()
       message.axis = 0
       message.force = 1.0
 
       while True:
-          publisher.publish(message)
+          yield From(publisher.publish(message))
           yield From(trollius.sleep(1.0))
   
   loop = trollius.get_event_loop()
