@@ -3,7 +3,7 @@
 History
 -------
 
-3.0.0-2014.1 (2014-??-??)
+3.0.0-2014.1 (2014-07-04)
 +++++++++++++++++++++++++
 
 * Switch from eventlet to trollius/asyncio, for better compatibility
