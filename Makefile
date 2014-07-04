@@ -22,7 +22,7 @@ update-gazebo:
     echo "Gazebo must be installed to update message definitions"; \
     exit 1; \
   fi
-	rm -f pygazebo/msg/*
+	rm -rf pygazebo/msg/*
 	for definition in \
 	  $$(find ${GAZEBO_INCLUDE_DIR}/gazebo/msgs/proto -name '*.proto'); \
       do protoc -I ${GAZEBO_INCLUDE_DIR}/gazebo/msgs/proto \

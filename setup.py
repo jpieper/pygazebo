@@ -28,7 +28,7 @@ class PyTest(TestCommand):
 
 setup(
     name='pygazebo',
-    version='2.2.1-2014.2',
+    version='3.0.0-2014.1',
     description='Python bindings for the Gazebo multi-robot simulator.',
     long_description=readme + '\n\n' + history,
     author='Josh Pieper',
@@ -40,7 +40,7 @@ setup(
     ],
     package_dir={'pygazebo': 'pygazebo'},
     include_package_data=True,
-    install_requires=['eventlet', 'protobuf'],
+    install_requires=['protobuf', 'trollius'],
     license="Apache License 2.0",
     zip_safe=False,
     keywords='pygazebo',
@@ -52,8 +52,6 @@ setup(
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.3',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: Scientific/Engineering',
     ],
