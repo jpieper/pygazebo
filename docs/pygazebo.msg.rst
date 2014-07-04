@@ -11,6 +11,11 @@ BoxGeom
 
 .. autoclass:: pygazebo.msg.boxgeom_pb2.BoxGeom
 
+CameraCmd
+---------
+
+.. autoclass:: pygazebo.msg.camera_cmd_pb2.CameraCmd
+
 CameraSensor
 ------------
 
@@ -385,6 +390,11 @@ SphereGeom
 ----------
 
 .. autoclass:: pygazebo.msg.spheregeom_pb2.SphereGeom
+
+SphericalCoordinates
+--------------------
+
+.. autoclass:: pygazebo.msg.spherical_coordinates_pb2.SphericalCoordinates
 
 Subscribe
 ---------
