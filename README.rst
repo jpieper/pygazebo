@@ -51,6 +51,7 @@ local machine on the default port.
                             'gazebo.msgs.JointCmd'))
   
       message = pygazebo.msg.joint_cmd_pb2.JointCmd()
+      message.name = 'robot::joint_name'
       message.axis = 0
       message.force = 1.0
 
