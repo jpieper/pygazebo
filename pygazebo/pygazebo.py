@@ -103,7 +103,7 @@ class Publisher(object):
             try:
                 future.result()
             except Exception as e:
-                logger.debug('write error, closing connection:', str(e))
+                logger.debug('write error, closing connection:' + str(e))
                 if connection in self.publisher._listeners:
                     self.publisher._listeners.remove(connection)
 
