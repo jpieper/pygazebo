@@ -11,12 +11,12 @@ import math
 import socket
 import time
 
-import msg
-import msg.gz_string_pb2
-import msg.gz_string_v_pb2
-import msg.packet_pb2
-import msg.publishers_pb2
-import msg.subscribe_pb2
+from . import msg
+from .msg import gz_string_pb2
+from .msg import gz_string_v_pb2
+from .msg import packet_pb2
+from .msg import publishers_pb2
+from .msg import subscribe_pb2
 
 logger = logging.getLogger(__name__)
 
