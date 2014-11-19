@@ -658,7 +658,7 @@ class Manager(object):
                     message.serialized_data))
         else:
             logger.warn('Manager.handle_server_connection unknown msg:' +
-                        str(msg.type))
+                        str(message.type))
 
         self._read_server_data(connection)
 
