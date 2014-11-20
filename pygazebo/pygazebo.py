@@ -9,6 +9,7 @@ except ImportError:
 import logging
 import math
 import socket
+import sys
 import time
 
 from . import msg
@@ -20,6 +21,7 @@ from .msg import subscribe_pb2
 
 logger = logging.getLogger(__name__)
 
+tobytes = str if sys.version_info[0] < 3 else lambda x: bytes(x, 'utf-8') 
 
 class ParseError(RuntimeError):
     pass
@@ -293,14 +295,14 @@ class _Connection(object):
         try:
             header = future.result()
             if len(header) < 8:
-                raise ParseError('malformed header: ' + header)
+                raise ParseError('malformed header: ' + str(header))
 
             try:
                 size = int(header, 16)
             except ValueError:
-                raise ParseError('invalid header: ' + header)
+                raise ParseError('invalid header: ' + str(header))
 
-            self.start_read_data('', size, result)
+            self.start_read_data(bytes(), size, result)
         except Exception as e:
             result.set_exception(e)
             return
@@ -395,7 +397,7 @@ class _Connection(object):
             future.result()  # check for error
             data = message.SerializeToString()
 
-            header = '%08X' % len(data)
+            header = tobytes('%08X' % len(data))
             future = self.send_pieces(header + data)
             future.add_done_callback(
                 lambda future: self.finish_write(future, result))
