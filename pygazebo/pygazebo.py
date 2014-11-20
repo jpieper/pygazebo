@@ -26,6 +26,9 @@ tobytes = str if sys.version_info[0] < 3 else lambda x: bytes(x, 'utf-8')
 class ParseError(RuntimeError):
     pass
 
+class DisconnectError(RuntimeError):
+    pass
+
 
 class Event(object):
     """This class provides nearly identical functionality to
@@ -295,6 +298,10 @@ class _Connection(object):
         try:
             header = future.result()
             if len(header) < 8:
+                if not header:
+                    self.socket.close()
+                    raise DisconnectError()
+                
                 raise ParseError('malformed header: ' + str(header))
 
             try:
