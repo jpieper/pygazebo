@@ -206,7 +206,7 @@ class Subscriber(object):
             return
 
         self.callback(data)
-        self._connect3(connection)
+        self._connect3(future, connection)
 
 
 class _Connection(object):
