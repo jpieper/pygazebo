@@ -27,6 +27,8 @@ class ParseError(RuntimeError):
     pass
 
 class DisconnectError(RuntimeError):
+    '''Thrown when a disconnect is detected -- but we do not currently
+       handle all disconnect cases'''
     pass
 
 
