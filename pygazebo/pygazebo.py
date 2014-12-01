@@ -21,7 +21,7 @@ from .msg import subscribe_pb2
 
 logger = logging.getLogger(__name__)
 
-tobytes = str if sys.version_info[0] < 3 else lambda x: bytes(x, 'utf-8') 
+tobytes = str if sys.version_info[0] < 3 else lambda x: bytes(x, 'utf-8')
 
 class ParseError(RuntimeError):
     pass
@@ -303,7 +303,7 @@ class _Connection(object):
                 if not header:
                     self.socket.close()
                     raise DisconnectError()
-                
+
                 raise ParseError('malformed header: ' + str(header))
 
             try:
