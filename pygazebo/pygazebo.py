@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 
 tobytes = str if sys.version_info[0] < 3 else lambda x: bytes(x, 'utf-8')
 
+
 class ParseError(RuntimeError):
     pass
+
 
 class DisconnectError(RuntimeError):
     '''Thrown when a disconnect is detected -- but we do not currently
