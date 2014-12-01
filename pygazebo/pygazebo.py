@@ -291,7 +291,6 @@ class _Connection(object):
     def read_raw(self):
         result = asyncio.Future()
 
-        logger.debug('Connection.read_raw')
         loop = asyncio.get_event_loop()
         future = asyncio.async(loop.sock_recv(self.socket, 8))
         future.add_done_callback(
@@ -350,7 +349,6 @@ class _Connection(object):
             return
 
     def read(self):
-        logger.debug('Connection.read')
         result = asyncio.Future()
 
         future = self.read_raw()
