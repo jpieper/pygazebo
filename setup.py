@@ -26,6 +26,11 @@ class PyTest(TestCommand):
         errcode = pytest.main(self.test_args)
         sys.exit(errcode)
 
+install_requires = ['protobuf>=2.6']
+
+if sys.hexversion < 0x03040000:
+    install_requires.append('trollius')
+
 setup(
     name='pygazebo',
     version='3.0.0-2014.1',
@@ -40,7 +45,7 @@ setup(
     ],
     package_dir={'pygazebo': 'pygazebo'},
     include_package_data=True,
-    install_requires=['protobuf', 'trollius'],
+    install_requires=install_requires,
     license="Apache License 2.0",
     zip_safe=False,
     keywords='pygazebo',
@@ -52,6 +57,10 @@ setup(
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.2',
+        'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: Scientific/Engineering',
     ],
