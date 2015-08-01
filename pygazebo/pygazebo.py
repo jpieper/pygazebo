@@ -698,7 +698,7 @@ class Manager(object):
     def _handle_version_init(self, msg):
         logger.debug('Manager.handle_version_init' + msg.data)
         version = float(msg.data.split(' ')[1])
-        if version < 2.2:
+        if version < 1.9:
             raise ParseError('Unsupported gazebo version: ' + msg.data)
 
     def _handle_topic_namespaces_init(self, msg):
